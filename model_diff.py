@@ -1,5 +1,4 @@
 import torch
-import timm
 import numpy as np
 
 from einops import repeat, rearrange
@@ -10,7 +9,7 @@ from timm.models.vision_transformer import Block
 
 from diffsim_torch import diffraction_from_channels
 
-def random_indexes(size : int):
+def random_indexes(size: int):
     forward_indexes = np.arange(size)
     np.random.shuffle(forward_indexes)
     backward_indexes = np.argsort(forward_indexes)
@@ -24,7 +23,7 @@ class PatchShuffle(torch.nn.Module):
         super().__init__()
         self.ratio = ratio
 
-    def forward(self, patches : torch.Tensor):
+    def forward(self, patches: torch.Tensor):
         T, B, C = patches.shape
         remain_T = int(T * (1 - self.ratio))
 
@@ -85,8 +84,8 @@ class MAE_Decoder(torch.nn.Module):
                  emb_dim=192,
                  num_layer=4,
                  num_head=3,
-                 intensity_scale = 1000.,
-                 probe = None
+                 intensity_scale=1000.,
+                 probe=None
                  ) -> None:
         super().__init__()
 
@@ -97,10 +96,12 @@ class MAE_Decoder(torch.nn.Module):
 
         self.head = torch.nn.Linear(emb_dim, 3 * patch_size ** 2)
         self.patch2img = Rearrange('(h w) b (c p1 p2) -> b c (h p1) (w p2)', p1=patch_size, p2=patch_size, h=image_size//patch_size)
-        self.diffract = partial(diffraction_from_channels, intensity_scale = intensity_scale, draw_poisson = False)
+        self.diffract = partial(diffraction_from_channels, intensity_scale=intensity_scale, draw_poisson=False)
         if probe is None:
             raise ValueError
         self.probe = probe
+
+        self.img = None
 
         self.init_weight()
 
@@ -118,13 +119,14 @@ class MAE_Decoder(torch.nn.Module):
         features = rearrange(features, 't b c -> b t c')
         features = self.transformer(features)
         features = rearrange(features, 'b t c -> t b c')
-        features = features[1:] # remove global feature
+        features = features[1:]  # remove global feature
 
         patches = self.head(features)
         mask = torch.zeros_like(patches)
         mask[T-1:] = 1
         mask = take_indexes(mask, backward_indexes[1:] - 1)
         img = self.patch2img(patches)
+        self.img = img  # Store the intermediate img tensor
         mask = self.patch2img(mask)
 
         amplitude = self.diffract(img, self.probe)
@@ -141,22 +143,28 @@ class MAE_ViT(torch.nn.Module):
                  decoder_layer=4,
                  decoder_head=3,
                  mask_ratio=0.75,
-                 intensity_scale = 1000.,
-                 probe = None
+                 intensity_scale=1000.,
+                 probe=None
                  ) -> None:
         super().__init__()
 
         self.encoder = MAE_Encoder(image_size, patch_size, emb_dim, encoder_layer, encoder_head, mask_ratio)
         self.decoder = MAE_Decoder(image_size, patch_size, emb_dim, decoder_layer, decoder_head,
-                                   intensity_scale = intensity_scale, probe = probe)
+                                   intensity_scale=intensity_scale, probe=probe)
 
     def forward(self, img):
         features, backward_indexes = self.encoder(img)
-        predicted_img, mask = self.decoder(features,  backward_indexes)
+        predicted_img, mask = self.decoder(features, backward_indexes)
         return predicted_img, mask
 
+    def forward_with_intermediate(self, img):
+        features, backward_indexes = self.encoder(img)
+        predicted_img, mask = self.decoder(features, backward_indexes)
+        intermediate_img = self.decoder.img
+        return predicted_img, mask, intermediate_img
+
 class ViT_Classifier(torch.nn.Module):
-    def __init__(self, encoder : MAE_Encoder, num_classes=10) -> None:
+    def __init__(self, encoder: MAE_Encoder, num_classes=10) -> None:
         super().__init__()
         self.cls_token = encoder.cls_token
         self.pos_embedding = encoder.pos_embedding
