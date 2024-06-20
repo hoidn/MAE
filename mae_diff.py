@@ -7,7 +7,7 @@ from torch.utils.tensorboard import SummaryWriter
 from torchvision.transforms import ToTensor, Compose, Normalize
 from tqdm import tqdm
 
-from model import *
+from model_diff import *
 from utils import setup_seed
 
 from PIL import Image
@@ -59,8 +59,8 @@ if __name__ == '__main__':
     parser.add_argument('--model_path', type=str, default='vit-t-mae.pt')
 
     args = parser.parse_args()
-#    intensity_scale = 1000.
-#    from torch_probe import probe
+    intensity_scale = 1000.
+    from torch_probe import probe
 
     setup_seed(args.seed)
 
@@ -81,11 +81,13 @@ if __name__ == '__main__':
 #    val_dataset = torchvision.datasets.CIFAR10('data', train=False, download=True, transform=Compose([ToTensor()]))
 #    dataloader = torch.utils.data.DataLoader(train_dataset, load_batch_size, shuffle=True, num_workers=4)
 
+
     writer = SummaryWriter(os.path.join('logs', 'cifar10', 'mae-pretrain'))
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    #probe = (probe[None, None, :, :]).to(device)
+    probe = (probe).to(device)
 
-    model = MAE_ViT(mask_ratio=args.mask_ratio).to(device)
+    model = MAE_ViT(mask_ratio=args.mask_ratio, intensity_scale = intensity_scale,
+                    probe = probe).to(device)
     optim = torch.optim.AdamW(model.parameters(), lr=args.base_learning_rate * args.batch_size / 256, betas=(0.9, 0.95), weight_decay=args.weight_decay)
     lr_func = lambda epoch: min((epoch + 1) / (args.warmup_epoch + 1e-8), 0.5 * (math.cos(epoch / args.total_epoch * math.pi) + 1))
     lr_scheduler = torch.optim.lr_scheduler.LambdaLR(optim, lr_lambda=lr_func, verbose=True)
@@ -95,7 +97,8 @@ if __name__ == '__main__':
     for e in range(args.total_epoch):
         model.train()
         losses = []
-        for img in tqdm(iter(dataloader)):
+        running_loss = 0.0
+        for i, img in enumerate(tqdm(iter(dataloader)), 1):
             step_count += 1
             img = img.to(device)
             predicted_img, mask = model(img)
@@ -105,10 +108,18 @@ if __name__ == '__main__':
                 optim.step()
                 optim.zero_grad()
             losses.append(loss.item())
+            
+            # Calculate running average loss
+#            running_loss += loss.item()
+#            if i % 10 == 0 or i < 5:  # Print every 10 batches
+#                avg_running_loss = running_loss / 10
+#                print(f"Epoch [{e+1}/{args.total_epoch}], Batch [{i}/{len(dataloader)}], Running Average Loss: {avg_running_loss:.4f}")
+#                running_loss = 0.0
+        
         lr_scheduler.step()
         avg_loss = sum(losses) / len(losses)
         writer.add_scalar('mae_loss', avg_loss, global_step=e)
-        print(f'In epoch {e}, average traning loss is {avg_loss}.')
+        print(f'In epoch {e}, average training loss is {avg_loss}.')
 
         ''' visualize the first 16 predicted images on val dataset'''
         model.eval()
