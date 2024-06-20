@@ -6,6 +6,7 @@ from torch.utils.tensorboard import SummaryWriter
 from diffsim_torch import illuminate_and_diffract
 import torchvision.utils as vutils
 from diffsim_torch import diffraction_from_channels
+
 from torch_probe import probe
 
 # Parameters
@@ -37,19 +38,20 @@ device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 def process_and_save(dataloader, save_dir, writer, phase):
     for batch_idx, (batch, _) in enumerate(dataloader):
-        batch = (batch + torch.flip(batch, dims=[2, 3])) / 2
-        diffracted_batch = diffraction_from_channels(batch, probe)
+        pre_diffraction_batch = (batch + torch.flip(batch, dims=[2, 3])) / 2
+        diffracted_batch = diffraction_from_channels(pre_diffraction_batch, probe)
         print(f"Processing {phase} batch {batch_idx + 1}")
-        for i, img in enumerate(diffracted_batch):
-            vutils.save_image(img, os.path.join(save_dir, f'{phase}_{batch_idx}_{i}.png'))
+        for i, (pre_img, diff_img) in enumerate(zip(pre_diffraction_batch, diffracted_batch)):
+            vutils.save_image(pre_img, os.path.join(save_dir, f'{phase}_pre_{batch_idx}_{i}.png'))
+            vutils.save_image(diff_img, os.path.join(save_dir, f'{phase}_diff_{batch_idx}_{i}.png'))
+        writer.add_images(f'Pre-diffraction Images/{phase}', pre_diffraction_batch, batch_idx, dataformats='NCHW')
         writer.add_images(f'Diffracted Images/{phase}', diffracted_batch, batch_idx, dataformats='NCHW')
-    return batch, diffracted_batch
+    return pre_diffraction_batch, diffracted_batch
 
 # Process and save train data
 process_and_save(train_loader, save_dir_train, writer, 'train')
 
 # Process and save test data
-batch, diffracted_batch = process_and_save(test_loader, save_dir_test, writer, 'test')
+pre_diffraction_batch, diffracted_batch = process_and_save(test_loader, save_dir_test, writer, 'test')
 
 writer.close()
-

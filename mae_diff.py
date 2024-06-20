@@ -15,27 +15,41 @@ from torch.utils.data import Dataset, DataLoader
 from torchvision.transforms import ToTensor, Compose
 import os
 
-class FlatDirectoryDataset(Dataset):
+class PreDiffractionDataset(Dataset):
     def __init__(self, root_dir, transform=None):
         self.root_dir = root_dir
         self.transform = transform
-        self.image_files = [f for f in os.listdir(root_dir) if f.endswith('.png')]
+        self.pre_files = [f for f in os.listdir(root_dir) if f.startswith('train_pre_') or f.startswith('test_pre_')]
+        self.diff_files = [f for f in os.listdir(root_dir) if f.startswith('train_diff_')  or f.startswith('test_diff_')]
+        
+        if len(self.pre_files) == 0:
+            raise ValueError(f"No pre-diffraction images found in {root_dir}")
+        if len(self.diff_files) == 0:
+            raise ValueError(f"No diffracted images found in {root_dir}")
+        if len(self.pre_files) != len(self.diff_files):
+            raise ValueError(f"Mismatch in the number of pre-diffraction and diffracted images in {root_dir}")
+        
+        print(f"Found {len(self.pre_files)} pre-diffraction and {len(self.diff_files)} diffracted images in {root_dir}")
     
     def __len__(self):
-        return len(self.image_files)
+        return len(self.pre_files)
     
     def __getitem__(self, idx):
-        img_name = os.path.join(self.root_dir, self.image_files[idx])
-        image = Image.open(img_name).convert("RGB")
+        pre_img_name = os.path.join(self.root_dir, self.pre_files[idx])
+        diff_img_name = os.path.join(self.root_dir, self.diff_files[idx])
+        pre_image = Image.open(pre_img_name).convert("RGB")
+        diff_image = Image.open(diff_img_name).convert("RGB")
         if self.transform:
-            image = self.transform(image)
-        return image
+            pre_image = self.transform(pre_image)
+            diff_image = self.transform(diff_image)
+        return pre_image, diff_image
+
 
 def load_datasets_and_dataloaders(train_dir, test_dir, batch_size=128, num_workers=4):
     transform = Compose([ToTensor()])
 
-    train_dataset = FlatDirectoryDataset(root_dir=train_dir, transform=transform)
-    test_dataset = FlatDirectoryDataset(root_dir=test_dir, transform=transform)
+    train_dataset = PreDiffractionDataset(root_dir=train_dir, transform=transform)
+    test_dataset = PreDiffractionDataset(root_dir=test_dir, transform=transform)
 
     train_dataloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=num_workers)
     test_dataloader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=num_workers)
@@ -89,11 +103,11 @@ if __name__ == '__main__':
         model.train()
         losses = []
         running_loss = 0.0
-        for i, img in enumerate(tqdm(iter(dataloader)), 1):
+        for i, (_, diff_img) in enumerate(tqdm(iter(dataloader)), 1):
             step_count += 1
-            img = img.to(device)
-            predicted_img, mask = model(img)
-            loss = torch.mean((predicted_img - img) ** 2 * mask) / args.mask_ratio
+            diff_img = diff_img.to(device)
+            predicted_img, mask = model(diff_img)
+            loss = torch.mean((predicted_img - diff_img) ** 2 * mask) / args.mask_ratio
             loss.backward()
             if step_count % steps_per_update == 0:
                 optim.step()
@@ -108,13 +122,14 @@ if __name__ == '__main__':
         ''' visualize the first 16 predicted images on val dataset '''
         model.eval()
         with torch.no_grad():
-            val_img = torch.stack([val_dataset[i] for i in range(16)])
-            val_img = val_img.to(device)
-            predicted_val_img, mask, intermediate_img = model.forward_with_intermediate(val_img)
-            predicted_val_img = predicted_val_img * mask + val_img * (1 - mask)
-            img = torch.cat([val_img * (1 - mask), predicted_val_img, val_img], dim=0)
-            img = rearrange(img, '(v h1 w1) c h w -> c (h1 h) (w1 v w)', w1=2, v=3)
-            writer.add_image('mae_image', (img + 1) / 2, global_step=e)
+            val_pre_img, val_diff_img = zip(*[val_dataset[i] for i in range(16)])
+            val_pre_img = torch.stack(val_pre_img).to(device)
+            val_diff_img = torch.stack(val_diff_img).to(device)
+            predicted_val_img, mask, intermediate_img = model.forward_with_intermediate(val_diff_img)
+            predicted_val_img = predicted_val_img * mask + val_diff_img * (1 - mask)
+            img = torch.cat([val_pre_img, val_diff_img, predicted_val_img], dim=0)
+            img = rearrange(img, '(v h1 w1) c h w -> c (h1 h) (w1 v w)', w1=3, v=1)
+            writer.add_image('MAE Image Comparison', (img + 1) / 2, global_step=e)
 
         ''' save model '''
         torch.save(model, args.model_path)
