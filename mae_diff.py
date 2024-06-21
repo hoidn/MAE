@@ -2,7 +2,6 @@ import os
 import argparse
 import math
 import torch
-import torchvision
 from torch.utils.tensorboard.writer import SummaryWriter
 from torchvision.transforms import ToTensor, Compose, Normalize
 from tqdm import tqdm
@@ -84,7 +83,11 @@ if __name__ == '__main__':
 
     args = parser.parse_args()
     intensity_scale = 1000.
-    from torch_probe import probe
+    N = 32
+    #from torch_probe import probe
+    # probe use by model. NOT necessarily the same as the simulation probe
+    from probe_torch import create_centered_square
+    probe = create_centered_square(N = N)
 
     setup_seed(args.seed)
 
@@ -101,7 +104,9 @@ if __name__ == '__main__':
     )
 
     # Initialize TensorBoard SummaryWriter
-    writer = SummaryWriter(os.path.join('logs', 'mae_pretrain'))
+    tboard_name = args.model_path.split('.')[0]
+    writer = SummaryWriter(os.path.join('logs', tboard_name))
+    #writer = SummaryWriter(os.path.join('logs', 'mae_pretrain'))
 
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     probe = (probe).to(device)

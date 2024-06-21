@@ -6,7 +6,7 @@ from torch.utils.tensorboard import SummaryWriter
 from diffsim_torch import illuminate_and_diffract
 import torchvision.utils as vutils
 from diffsim_torch import diffraction_from_channels
-from torch_probe import probe
+from probe_torch import get_default_probe
 
 # Parameters
 intensity_scale = 1000.
@@ -35,7 +35,8 @@ writer = SummaryWriter(os.path.join('logs', 'cifar10', 'mae-pretrain'))
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 
-def process_and_save(dataloader, save_dir, writer, phase):
+def process_and_save(dataloader, save_dir, writer, phase, probe_scale = .55):
+    probe = get_default_probe(probe_scale = probe_scale)
     for batch_idx, (batch, _) in enumerate(dataloader):
         pre_diffraction_batch = (batch + torch.flip(batch, dims=[2, 3])) / 2
         pre_diffraction_batch[:, 1:3, :, :] -= 0.5

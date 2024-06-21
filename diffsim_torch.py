@@ -197,13 +197,16 @@ def map_to_unit_interval(tensor: torch.Tensor) -> torch.Tensor:
     sigmoid_tensor = torch.sigmoid(tensor)
     return sigmoid_tensor
 
+
+
 def diffraction_from_channels(batch, probe, intensity_scale = 1000.,
                               draw_poisson = True):
     dprint(f"Input batch shape: {batch.shape}, Data type: {batch.dtype}")
 
     Y_I = map_to_unit_interval(batch[:, 0])# + batch[:, 2]) / 2  # Calculate Y_phi as the average of the second and third channels
     Y_phi_input = (batch[:, 1] + batch[:, 2]) / 2
-    Y_phi = map_to_pi(Y_phi_input)
+    Y_phi = Y_phi_input #* allow phase wrapping instead of squashing with tanh
+    #Y_phi = map_to_pi(Y_phi_input)
 
 #    Y_I = (batch[:, 0]  + batch[:, 1] + batch[:, 2]) / 3 
 #    Y_phi = torch.zeros_like(Y_I)#(batch[:, 1])# + batch[:, 2]) / 2  # Calculate Y_phi as the average of the second and third channels
