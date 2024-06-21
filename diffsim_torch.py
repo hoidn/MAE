@@ -158,20 +158,62 @@ def illuminate_and_diffract(Y_complex, probe, intensity_scale=None,
 
     return X
 
+def map_to_pi(tensor: torch.Tensor) -> torch.Tensor:
+    """
+    Maps a tensor of float values to the interval [-π, π] using the hyperbolic tangent function.
+    """
+    assert tensor.dtype == torch.float, "Input tensor must be of type float."
+    
+    # Apply the hyperbolic tangent function to scale values to [-1, 1]
+    scaled_tensor = torch.tanh(tensor)
+    
+    # Scale and shift the output to fit the [-π, π] interval
+    pi_tensor = scaled_tensor * torch.pi
+    
+    return pi_tensor
+
+def combine_amp_phase(amplitudes: torch.Tensor, phases: torch.Tensor) -> torch.Tensor:
+    """
+    Returns:
+    torch.Tensor: A complex tensor where each element is formed from corresponding amplitude and phase.
+    """
+    assert amplitudes.dtype == torch.float, "Amplitudes must be a tensor of type float."
+    assert phases.dtype == torch.float, "Phases must be a tensor of type float."
+    
+    # Convert amplitude and phase to real and imaginary components
+    real = amplitudes * torch.cos(phases)
+    imag = amplitudes * torch.sin(phases)
+    
+    # Create complex tensor
+    complex_tensor = torch.complex(real, imag)
+    return complex_tensor
+
+def map_to_unit_interval(tensor: torch.Tensor) -> torch.Tensor:
+    """
+    Maps a tensor of float values to the interval [0, 1] using the sigmoid function.
+    """
+    assert tensor.dtype == torch.float, "Input tensor must be of type float."
+    # Apply the sigmoid function to scale values to [0, 1]
+    sigmoid_tensor = torch.sigmoid(tensor)
+    return sigmoid_tensor
+
 def diffraction_from_channels(batch, probe, intensity_scale = 1000.,
                               draw_poisson = True):
     dprint(f"Input batch shape: {batch.shape}, Data type: {batch.dtype}")
 
-    Y_I = (batch[:, 0])# + batch[:, 2]) / 2  # Calculate Y_phi as the average of the second and third channels
-    Y_phi = (batch[:, 1] + batch[:, 2]) / 2
+    Y_I = map_to_unit_interval(batch[:, 0])# + batch[:, 2]) / 2  # Calculate Y_phi as the average of the second and third channels
+    Y_phi_input = (batch[:, 1] + batch[:, 2]) / 2
+    Y_phi = map_to_pi(Y_phi_input)
+
 #    Y_I = (batch[:, 0]  + batch[:, 1] + batch[:, 2]) / 3 
 #    Y_phi = torch.zeros_like(Y_I)#(batch[:, 1])# + batch[:, 2]) / 2  # Calculate Y_phi as the average of the second and third channels
 
     dprint(f"Y_I shape: {Y_I.shape}, Data type: {Y_I.dtype}")
     dprint(f"Y_phi shape: {Y_phi.shape}, Data type: {Y_phi.dtype}")
     
-    # Create a complex tensor by combining Y_I and Y_phi
-    Y_complex = torch.complex(Y_I, Y_phi)
+#    # Create a complex tensor by combining Y_I and Y_phi
+#    Y_complex = torch.complex(Y_I, Y_phi)
+    Y_complex = combine_amp_phase(Y_I, Y_phi)
     
     dprint(f"Y_complex shape: {Y_complex.shape}, Data type: {Y_complex.dtype}")
 
