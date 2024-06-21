@@ -21,8 +21,12 @@ def observe_amplitude(amplitude):
 #    return torch.sqrt(torch.poisson(amplitude**2).sample())
 
 def count_photons(obj):
-    return torch.sum(obj**2, dim=(1, 2))
+    assert len(obj.shape) == 4
+    # TODO obj needs to be in NCHW format
+    return torch.sum(obj**2, dim=(2, 3))
 
+# TODO in the data generating phase, this should be over the entire dataset
+# (not just a batch)
 def scale_nphotons(padded_obj):
     mean_photons = torch.mean(count_photons(padded_obj))
     norm = torch.sqrt(p.get('nphotons') / mean_photons)

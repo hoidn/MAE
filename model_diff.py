@@ -163,6 +163,23 @@ class MAE_ViT(torch.nn.Module):
         intermediate_img = self.decoder.img
         return predicted_img, mask, intermediate_img
 
+    def save_model(self, file_path, probe):
+        save_dict = {
+            'model_state_dict': self.state_dict(),
+            'probe': probe
+        }
+        torch.save(save_dict, file_path)
+
+    @classmethod
+    def load_model(cls, file_path):
+        checkpoint = torch.load(file_path)
+        probe = checkpoint['probe']
+        train_losses = checkpoint['train_losses']
+        val_losses = checkpoint['val_losses']
+        model = cls(probe = probe)
+        model.load_state_dict(checkpoint['model_state_dict'])
+        return model, probe, train_losses, val_losses
+
 class ViT_Classifier(torch.nn.Module):
     def __init__(self, encoder: MAE_Encoder, num_classes=10) -> None:
         super().__init__()
@@ -200,4 +217,3 @@ if __name__ == '__main__':
     print(predicted_img.shape)
     loss = torch.mean((predicted_img - img) ** 2 * mask / 0.75)
     print(loss)
-

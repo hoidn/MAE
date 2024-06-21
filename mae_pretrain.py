@@ -15,35 +15,47 @@ from torch.utils.data import Dataset, DataLoader
 from torchvision.transforms import ToTensor, Compose
 import os
 
-class FlatDirectoryDataset(Dataset):
+class PreDiffractionDataset(Dataset):
     def __init__(self, root_dir, transform=None):
         self.root_dir = root_dir
         self.transform = transform
-        self.image_files = [f for f in os.listdir(root_dir) if f.endswith('.png')]
+        self.pre_files = [f for f in os.listdir(root_dir) if f.startswith('train_pre_') or f.startswith('test_pre_')]
+        self.diff_files = [f for f in os.listdir(root_dir) if f.startswith('train_diff_')  or f.startswith('test_diff_')]
+        
+        if len(self.pre_files) == 0:
+            raise ValueError(f"No pre-diffraction images found in {root_dir}")
+        if len(self.diff_files) == 0:
+            raise ValueError(f"No diffracted images found in {root_dir}")
+        if len(self.pre_files) != len(self.diff_files):
+            raise ValueError(f"Mismatch in the number of pre-diffraction and diffracted images in {root_dir}")
+        
+        print(f"Found {len(self.pre_files)} pre-diffraction and {len(self.diff_files)} diffracted images in {root_dir}")
     
     def __len__(self):
-        return len(self.image_files)
+        return len(self.pre_files)
     
     def __getitem__(self, idx):
-        img_name = os.path.join(self.root_dir, self.image_files[idx])
-        image = Image.open(img_name).convert("RGB")
+        pre_img_name = os.path.join(self.root_dir, self.pre_files[idx])
+        diff_img_name = os.path.join(self.root_dir, self.diff_files[idx])
+        pre_image = Image.open(pre_img_name).convert("RGB")
+        diff_image = Image.open(diff_img_name).convert("RGB")
         if self.transform:
-            image = self.transform(image)
-        return image
+            pre_image = self.transform(pre_image)
+            diff_image = self.transform(diff_image)
+        return pre_image, diff_image
+
 
 def load_datasets_and_dataloaders(train_dir, test_dir, batch_size=128, num_workers=4):
-    # Define the transform without normalization
     transform = Compose([ToTensor()])
 
-    # Create the custom datasets
-    train_dataset = FlatDirectoryDataset(root_dir=train_dir, transform=transform)
-    test_dataset = FlatDirectoryDataset(root_dir=test_dir, transform=transform)
+    train_dataset = PreDiffractionDataset(root_dir=train_dir, transform=transform)
+    test_dataset = PreDiffractionDataset(root_dir=test_dir, transform=transform)
 
-    # DataLoaders
     train_dataloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=num_workers)
     test_dataloader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=num_workers)
     
     return train_dataset, test_dataset, train_dataloader, test_dataloader
+
 
 
 if __name__ == '__main__':

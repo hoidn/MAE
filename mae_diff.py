@@ -3,7 +3,7 @@ import argparse
 import math
 import torch
 import torchvision
-from torch.utils.tensorboard import SummaryWriter
+from torch.utils.tensorboard.writer import SummaryWriter
 from torchvision.transforms import ToTensor, Compose, Normalize
 from tqdm import tqdm
 
@@ -57,6 +57,18 @@ def load_datasets_and_dataloaders(train_dir, test_dir, batch_size=128, num_worke
     return train_dataset, test_dataset, train_dataloader, test_dataloader
 
 
+def evaluate(model, dataloader, mask_ratio, device):
+    model.eval()
+    total_loss = 0
+    with torch.no_grad():
+        for _, diff_img in dataloader:
+            diff_img = diff_img.to(device)
+            predicted_img, mask = model(diff_img)
+            loss = torch.mean((predicted_img - diff_img) ** 2 * mask) / mask_ratio
+            total_loss += loss.item()
+    return total_loss / len(dataloader)
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--seed', type=int, default=42)
@@ -68,6 +80,7 @@ if __name__ == '__main__':
     parser.add_argument('--total_epoch', type=int, default=2000)
     parser.add_argument('--warmup_epoch', type=int, default=200)
     parser.add_argument('--model_path', type=str, default='vit-t-mae.pt')
+    parser.add_argument('--val_interval', type=int, default=50)
 
     args = parser.parse_args()
     intensity_scale = 1000.
@@ -87,7 +100,9 @@ if __name__ == '__main__':
         batch_size=batch_size
     )
 
-    writer = SummaryWriter(os.path.join('logs', 'cifar10', 'mae-pretrain'))
+    # Initialize TensorBoard SummaryWriter
+    writer = SummaryWriter(os.path.join('logs', 'mae_pretrain'))
+
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     probe = (probe).to(device)
 
@@ -99,6 +114,7 @@ if __name__ == '__main__':
 
     step_count = 0
     optim.zero_grad()
+
     for e in range(args.total_epoch):
         model.train()
         losses = []
@@ -116,20 +132,28 @@ if __name__ == '__main__':
 
         lr_scheduler.step()
         avg_loss = sum(losses) / len(losses)
-        writer.add_scalar('mae_loss', avg_loss, global_step=e)
+        writer.add_scalar('Loss/train', avg_loss, global_step=e)
         print(f'In epoch {e}, average training loss is {avg_loss}.')
 
-        ''' visualize the first 16 predicted images on val dataset '''
-        model.eval()
-        with torch.no_grad():
-            val_pre_img, val_diff_img = zip(*[val_dataset[i] for i in range(16)])
-            val_pre_img = torch.stack(val_pre_img).to(device)
-            val_diff_img = torch.stack(val_diff_img).to(device)
-            predicted_val_img, mask, intermediate_img = model.forward_with_intermediate(val_diff_img)
-            predicted_val_img = predicted_val_img * mask + val_diff_img * (1 - mask)
-            img = torch.cat([val_pre_img, val_diff_img, predicted_val_img], dim=0)
-            img = rearrange(img, '(v h1 w1) c h w -> c (h1 h) (w1 v w)', w1=3, v=1)
-            writer.add_image('MAE Image Comparison', (img + 1) / 2, global_step=e)
+        if e % args.val_interval == 0:
+            model.eval()
+            with torch.no_grad():
+                val_loss = evaluate(model, test_dataloader, args.mask_ratio, device)
+            writer.add_scalar('Loss/validation', val_loss, global_step=e)
+            print(f'In epoch {e}, validation loss is {val_loss}.')
+
+            ''' visualize the first 16 predicted images on val dataset '''
+            with torch.no_grad():
+                val_pre_img, val_diff_img = zip(*[val_dataset[i] for i in range(16)])
+                val_pre_img = torch.stack(val_pre_img).to(device)
+                val_diff_img = torch.stack(val_diff_img).to(device)
+                predicted_val_img, mask, intermediate_img = model.forward_with_intermediate(val_diff_img)
+                predicted_val_img = predicted_val_img * mask + val_diff_img * (1 - mask)
+                img = torch.cat([val_pre_img, val_diff_img, predicted_val_img], dim=0)
+                img = rearrange(img, '(v h1 w1) c h w -> c (h1 h) (w1 v w)', w1=3, v=1)
+                writer.add_image('MAE Image Comparison', (img + 1) / 2, global_step=e)
 
         ''' save model '''
-        torch.save(model, args.model_path)
+        model.save_model(args.model_path, probe)
+
+    writer.close()
