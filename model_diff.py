@@ -174,11 +174,12 @@ class MAE_ViT(torch.nn.Module):
     def load_model(cls, file_path):
         checkpoint = torch.load(file_path)
         probe = checkpoint['probe']
-        train_losses = checkpoint['train_losses']
-        val_losses = checkpoint['val_losses']
+#        train_losses = checkpoint['train_losses']
+#        val_losses = checkpoint['val_losses']
         model = cls(probe = probe)
         model.load_state_dict(checkpoint['model_state_dict'])
-        return model, probe, train_losses, val_losses
+        model.probe = probe # TODO check if this is already set
+        return model
 
 class ViT_Classifier(torch.nn.Module):
     def __init__(self, encoder: MAE_Encoder, num_classes=10) -> None:

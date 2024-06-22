@@ -197,20 +197,27 @@ def map_to_unit_interval(tensor: torch.Tensor) -> torch.Tensor:
     sigmoid_tensor = torch.sigmoid(tensor)
     return sigmoid_tensor
 
+#def softplus(tensor: torch.Tensor) -> torch.Tensor:
+#    """
+#    Maps a tensor of float values using the softplus function.
+#    """
+#    assert tensor.dtype == torch.float, "Input tensor must be of type float."
+#    # Apply the softplus function
+#    return softplus_tensor
 
 
 def diffraction_from_channels(batch, probe, intensity_scale = 1000.,
                               draw_poisson = True):
     dprint(f"Input batch shape: {batch.shape}, Data type: {batch.dtype}")
 
-    Y_I = map_to_unit_interval(batch[:, 0])# + batch[:, 2]) / 2  # Calculate Y_phi as the average of the second and third channels
+    #Y_I = map_to_unit_interval(batch[:, 0])# + batch[:, 2]) / 2  # Calculate Y_phi as the average of the second and third channels
+    Y_I = torch.nn.functional.softplus(batch[:, 0])
     Y_phi_input = (batch[:, 1] + batch[:, 2]) / 2
     Y_phi = Y_phi_input #* allow phase wrapping instead of squashing with tanh
     #Y_phi = map_to_pi(Y_phi_input)
 
 #    Y_I = (batch[:, 0]  + batch[:, 1] + batch[:, 2]) / 3 
 #    Y_phi = torch.zeros_like(Y_I)#(batch[:, 1])# + batch[:, 2]) / 2  # Calculate Y_phi as the average of the second and third channels
-
     dprint(f"Y_I shape: {Y_I.shape}, Data type: {Y_I.dtype}")
     dprint(f"Y_phi shape: {Y_phi.shape}, Data type: {Y_phi.dtype}")
     

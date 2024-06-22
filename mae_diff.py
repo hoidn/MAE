@@ -8,40 +8,12 @@ from tqdm import tqdm
 
 from model_diff import *
 from utils import setup_seed
+from common import evaluate, PreDiffractionDataset
 
-from PIL import Image
 from torch.utils.data import Dataset, DataLoader
 from torchvision.transforms import ToTensor, Compose
 import os
 
-class PreDiffractionDataset(Dataset):
-    def __init__(self, root_dir, transform=None):
-        self.root_dir = root_dir
-        self.transform = transform
-        self.pre_files = [f for f in os.listdir(root_dir) if f.startswith('train_pre_') or f.startswith('test_pre_')]
-        self.diff_files = [f for f in os.listdir(root_dir) if f.startswith('train_diff_')  or f.startswith('test_diff_')]
-        
-        if len(self.pre_files) == 0:
-            raise ValueError(f"No pre-diffraction images found in {root_dir}")
-        if len(self.diff_files) == 0:
-            raise ValueError(f"No diffracted images found in {root_dir}")
-        if len(self.pre_files) != len(self.diff_files):
-            raise ValueError(f"Mismatch in the number of pre-diffraction and diffracted images in {root_dir}")
-        
-        print(f"Found {len(self.pre_files)} pre-diffraction and {len(self.diff_files)} diffracted images in {root_dir}")
-    
-    def __len__(self):
-        return len(self.pre_files)
-    
-    def __getitem__(self, idx):
-        pre_img_name = os.path.join(self.root_dir, self.pre_files[idx])
-        diff_img_name = os.path.join(self.root_dir, self.diff_files[idx])
-        pre_image = Image.open(pre_img_name).convert("RGB")
-        diff_image = Image.open(diff_img_name).convert("RGB")
-        if self.transform:
-            pre_image = self.transform(pre_image)
-            diff_image = self.transform(diff_image)
-        return pre_image, diff_image
 
 
 def load_datasets_and_dataloaders(train_dir, test_dir, batch_size=128, num_workers=4):
@@ -55,19 +27,6 @@ def load_datasets_and_dataloaders(train_dir, test_dir, batch_size=128, num_worke
     
     return train_dataset, test_dataset, train_dataloader, test_dataloader
 
-
-def evaluate(model, dataloader, mask_ratio, device):
-    model.eval()
-    total_loss = 0
-    with torch.no_grad():
-        for _, diff_img in dataloader:
-            diff_img = diff_img.to(device)
-            predicted_img, mask = model(diff_img)
-            loss = torch.mean((predicted_img - diff_img) ** 2 * mask) / mask_ratio
-            total_loss += loss.item()
-    return total_loss / len(dataloader)
-
-
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--seed', type=int, default=42)
@@ -79,7 +38,7 @@ if __name__ == '__main__':
     parser.add_argument('--total_epoch', type=int, default=2000)
     parser.add_argument('--warmup_epoch', type=int, default=200)
     parser.add_argument('--model_path', type=str, default='vit-t-mae.pt')
-    parser.add_argument('--val_interval', type=int, default=50)
+    parser.add_argument('--val_interval', type=int, default=1)
 
     args = parser.parse_args()
     intensity_scale = 1000.
@@ -98,19 +57,22 @@ if __name__ == '__main__':
     steps_per_update = batch_size // load_batch_size
 
     train_dataset, val_dataset, dataloader, test_dataloader = load_datasets_and_dataloaders(
-        train_dir='diffracted_images/train',
+        train_dir='bigprobe_images/train',
         test_dir='diffracted_images/test',
         batch_size=batch_size
     )
 
     # Initialize TensorBoard SummaryWriter
     tboard_name = args.model_path.split('.')[0]
-    writer = SummaryWriter(os.path.join('logs', tboard_name))
+    writer = SummaryWriter(os.path.join('logs', 'pinn', tboard_name))
+    #writer = SummaryWriter(os.path.join('logs', tboard_name))
     #writer = SummaryWriter(os.path.join('logs', 'mae_pretrain'))
 
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     probe = (probe).to(device)
 
+    # TODO use partial function application so that the syntax can be identical 
+    # t the other module
     model = MAE_ViT(mask_ratio=args.mask_ratio, intensity_scale=intensity_scale,
                     probe=probe).to(device)
     optim = torch.optim.AdamW(model.parameters(), lr=args.base_learning_rate * args.batch_size / 256, betas=(0.9, 0.95), weight_decay=args.weight_decay)
@@ -152,13 +114,15 @@ if __name__ == '__main__':
                 val_pre_img, val_diff_img = zip(*[val_dataset[i] for i in range(16)])
                 val_pre_img = torch.stack(val_pre_img).to(device)
                 val_diff_img = torch.stack(val_diff_img).to(device)
+                # TODO partial?
                 predicted_val_img, mask, intermediate_img = model.forward_with_intermediate(val_diff_img)
                 predicted_val_img = predicted_val_img * mask + val_diff_img * (1 - mask)
-                img = torch.cat([val_pre_img, val_diff_img, predicted_val_img], dim=0)
+                img = torch.cat([val_pre_img, intermediate_img, predicted_val_img], dim=0)
                 img = rearrange(img, '(v h1 w1) c h w -> c (h1 h) (w1 v w)', w1=3, v=1)
-                writer.add_image('MAE Image Comparison', (img + 1) / 2, global_step=e)
+                writer.add_image('MAE Image Comparison', (img), global_step=e)
 
         ''' save model '''
+        # TODO partial application
         model.save_model(args.model_path, probe)
 
     writer.close()
