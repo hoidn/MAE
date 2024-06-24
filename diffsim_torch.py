@@ -5,6 +5,7 @@ import torch.fft
 from skimage import draw, morphology
 import matplotlib.pyplot as plt
 import numpy as np
+#from ptycho.misc import memoize_disk_and_memory
 
 import params as p
 debug = False
@@ -45,22 +46,10 @@ def pad_and_diffract(input: torch.Tensor, h: int, w: int, pad: bool = True) -> T
     input = torch.real(torch.conj(input) * input) / (h * w)
     input = torch.sqrt(torch.fft.fftshift(input, dim=(-2, -1)))
     return padded, input
-#def pad_and_diffract(input: torch.Tensor, h: int, w: int, pad: bool = True) -> Tuple[torch.Tensor, torch.Tensor]:
-#    print('input shape', input.shape)
-#    if pad:
-#        input = pad_obj(input, h, w)
-#    padded = input
-#    #assert input.shape[-1] == 1
-#    input = torch.fft.fft2(input[..., 0].to(torch.complex64))
-#    input = torch.real(torch.conj(input) * input) / (h * w)
-#    input = torch.sqrt(torch.fft.fftshift(input, (-2, -1))).unsqueeze(-1)
-#    return padded, input
-
 
 def combine_complex(amp: torch.Tensor, phi: torch.Tensor) -> torch.Tensor:
     output = amp.to(torch.complex64) * torch.exp(1j * phi.to(torch.complex64))
     return output
-
 
 def mk_rand(N):
     return int(N * np.random.uniform())
@@ -76,8 +65,6 @@ def mk_lines_img(N=64, nlines=10):
 
 def mk_noise(N=64, nlines=10):
     return np.random.uniform(size=N * N).reshape((N, N, 1))
-
-#from ptycho.misc import memoize_disk_and_memory
 
 def add_position_jitter(coords, jitter_scale):
     shape = coords.shape
@@ -118,26 +105,19 @@ def sim_object_image(size, which='train'):
         raise ValueError
 
 def pad_and_diffract(input: torch.Tensor, h: int, w: int, pad: bool = True) -> Tuple[torch.Tensor, torch.Tensor]:
-    #print('input shape', input.shape)
     if pad:
         input = pad_obj(input, h, w)
-        #print('After padding:', input.shape)
     padded = input
     input = torch.fft.fft2(input[...].to(torch.complex64))
-    #print('After fft2:', input.shape)
     input = torch.real(torch.conj(input) * input) / (h * w)
-    #print('After element-wise multiplication and division:', input.shape)
     input = torch.sqrt(torch.fft.fftshift(input, dim=(-2, -1)))
-    #print('After fftshift and sqrt:', input.shape)
     return padded, input
 
 def diffract_obj(sample, draw_poisson=True):
     N = p.get('N')
     amplitude = pad_and_diffract(sample, N, N, pad=False)[1]
-    #print('After pad_and_diffract:', amplitude.shape)
     if draw_poisson:
         observed_amp = observe_amplitude(amplitude)
-        #print('After observe_amplitude:', observed_amp.shape)
         return observed_amp
     else:
         return amplitude
@@ -147,14 +127,10 @@ def illuminate_and_diffract(Y_complex, probe, intensity_scale=None,
     if intensity_scale is None:
         intensity_scale = scale_nphotons(torch.abs(Y_complex) * probe).item()
     obj = intensity_scale * Y_complex
-    #print('After intensity scaling:', obj.shape)
     obj = obj * probe.to(obj.dtype)
-    #print('After probe multiplication:', obj.shape)
 
     X = diffract_obj(obj, draw_poisson = draw_poisson)
-    #print('After diffract_obj:', X.shape)
     X = X / intensity_scale
-    #print('After intensity scaling:', X.shape)
 
     return X
 
@@ -197,32 +173,19 @@ def map_to_unit_interval(tensor: torch.Tensor) -> torch.Tensor:
     sigmoid_tensor = torch.sigmoid(tensor)
     return sigmoid_tensor
 
-#def softplus(tensor: torch.Tensor) -> torch.Tensor:
-#    """
-#    Maps a tensor of float values using the softplus function.
-#    """
-#    assert tensor.dtype == torch.float, "Input tensor must be of type float."
-#    # Apply the softplus function
-#    return softplus_tensor
-
-
 def diffraction_from_channels(batch, probe, intensity_scale = 1000.,
                               draw_poisson = True):
     dprint(f"Input batch shape: {batch.shape}, Data type: {batch.dtype}")
 
-    #Y_I = map_to_unit_interval(batch[:, 0])# + batch[:, 2]) / 2  # Calculate Y_phi as the average of the second and third channels
-    Y_I = torch.nn.functional.softplus(batch[:, 0])
+    # -1 bias helps center activations when the amplitude ranges between 0 and 1
+    Y_I = torch.nn.functional.softplus(batch[:, 0] - 1)
     Y_phi_input = (batch[:, 1] + batch[:, 2]) / 2
     Y_phi = Y_phi_input #* allow phase wrapping instead of squashing with tanh
-    #Y_phi = map_to_pi(Y_phi_input)
 
-#    Y_I = (batch[:, 0]  + batch[:, 1] + batch[:, 2]) / 3 
-#    Y_phi = torch.zeros_like(Y_I)#(batch[:, 1])# + batch[:, 2]) / 2  # Calculate Y_phi as the average of the second and third channels
     dprint(f"Y_I shape: {Y_I.shape}, Data type: {Y_I.dtype}")
     dprint(f"Y_phi shape: {Y_phi.shape}, Data type: {Y_phi.dtype}")
     
 #    # Create a complex tensor by combining Y_I and Y_phi
-#    Y_complex = torch.complex(Y_I, Y_phi)
     Y_complex = combine_amp_phase(Y_I, Y_phi)
     
     dprint(f"Y_complex shape: {Y_complex.shape}, Data type: {Y_complex.dtype}")

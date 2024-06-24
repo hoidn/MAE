@@ -8,25 +8,12 @@ from tqdm import tqdm
 
 from model import *
 from utils import setup_seed
-from common import evaluate, PreDiffractionDataset
+from common import evaluate, load_datasets_and_dataloaders
 
 from PIL import Image
 from torch.utils.data import Dataset, DataLoader
 from torchvision.transforms import ToTensor, Compose
 import os
-
-def load_datasets_and_dataloaders(train_dir, test_dir, batch_size=128, num_workers=4):
-    transform = Compose([ToTensor()])
-
-    train_dataset = PreDiffractionDataset(root_dir=train_dir, transform=transform)
-    test_dataset = PreDiffractionDataset(root_dir=test_dir, transform=transform)
-
-    train_dataloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=num_workers)
-    test_dataloader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=num_workers)
-    
-    return train_dataset, test_dataset, train_dataloader, test_dataloader
-
-
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
@@ -51,22 +38,15 @@ if __name__ == '__main__':
     assert batch_size % load_batch_size == 0
     steps_per_update = batch_size // load_batch_size
 
-#    train_dataset = torchvision.datasets.CIFAR10('data', train=True, download=True, transform=Compose([ToTensor(), Normalize(0.5, 0.5)]))
-#    val_dataset = torchvision.datasets.CIFAR10('data', train=False, download=True, transform=Compose([ToTensor(), Normalize(0.5, 0.5)]))
-    train_dataset, val_dataset, dataloader, test_dataloader = load_datasets_and_dataloaders(
+    train_dataset, in_dist_val_dataset, out_dist_val_dataset, dataloader, in_dist_val_dataloader, out_dist_val_dataloader = load_datasets_and_dataloaders(
         train_dir='bigprobe_images/train',
-        test_dir='diffracted_images/test',
-        batch_size = batch_size
+        in_dist_val_dir='bigprobe_images/test',
+        out_dist_val_dir='diffracted_images/test',
+        batch_size=batch_size
     )
-#    train_dataset = torchvision.datasets.CIFAR10('data', train=True, download=True, transform=Compose([ToTensor()]))
-#    val_dataset = torchvision.datasets.CIFAR10('data', train=False, download=True, transform=Compose([ToTensor()]))
-#    dataloader = torch.utils.data.DataLoader(train_dataset, load_batch_size, shuffle=True, num_workers=4)
 
     tboard_name = args.model_path.split('.')[0]
     writer = SummaryWriter(os.path.join('logs', 'vanilla', tboard_name))
-    #writer = SummaryWriter(os.path.join('logs', 'cifar10', 'mae-pretrain'))
-    device = 'cuda' if torch.cuda.is_available() else 'cpu'
-
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
     model = MAE_ViT(mask_ratio=args.mask_ratio).to(device)
@@ -80,7 +60,6 @@ if __name__ == '__main__':
     for e in range(args.total_epoch):
         model.train()
         losses = []
-        running_loss = 0.0
         for i, (_, diff_img) in enumerate(tqdm(iter(dataloader)), 1):
             step_count += 1
             diff_img = diff_img.to(device)
@@ -100,20 +79,32 @@ if __name__ == '__main__':
         if e % args.val_interval == 0:
             model.eval()
             with torch.no_grad():
-                val_loss = evaluate(model, test_dataloader, args.mask_ratio, device)
-            writer.add_scalar('Loss/validation', val_loss, global_step=e)
-            print(f'In epoch {e}, validation loss is {val_loss}.')
+                in_dist_val_loss = evaluate(model, in_dist_val_dataloader, args.mask_ratio, device)
+                out_dist_val_loss = evaluate(model, out_dist_val_dataloader, args.mask_ratio, device)
+            writer.add_scalar('Loss/in_dist_validation', in_dist_val_loss, global_step=e)
+            writer.add_scalar('Loss/out_dist_validation', out_dist_val_loss, global_step=e)
+            print(f'In epoch {e}, in-distribution validation loss is {in_dist_val_loss}, out-of-distribution validation loss is {out_dist_val_loss}.')
 
-            ''' visualize the first 16 predicted images on val dataset '''
+            ''' visualize the first 16 predicted images on in-distribution val dataset '''
             with torch.no_grad():
-                val_pre_img, val_diff_img = zip(*[val_dataset[i] for i in range(16)])
+                val_pre_img, val_diff_img = zip(*[in_dist_val_dataset[i] for i in range(16)])
                 val_pre_img = torch.stack(val_pre_img).to(device)
                 val_diff_img = torch.stack(val_diff_img).to(device)
-                predicted_val_img, mask = model.forward(val_diff_img)
+                predicted_val_img, mask = model(val_diff_img)
                 predicted_val_img = predicted_val_img * mask + val_diff_img * (1 - mask)
                 img = torch.cat([val_pre_img, val_diff_img, predicted_val_img], dim=0)
                 img = rearrange(img, '(v h1 w1) c h w -> c (h1 h) (w1 v w)', w1=3, v=1)
-                writer.add_image('MAE Image Comparison', (img + 1) / 2, global_step=e)
+                writer.add_image('In-dist MAE Image Comparison', (img + 1) / 2, global_step=e)
 
+            ''' visualize the first 16 predicted images on out-of-distribution val dataset '''
+            with torch.no_grad():
+                val_pre_img, val_diff_img = zip(*[out_dist_val_dataset[i] for i in range(16)])
+                val_pre_img = torch.stack(val_pre_img).to(device)
+                val_diff_img = torch.stack(val_diff_img).to(device)
+                predicted_val_img, mask = model(val_diff_img)
+                predicted_val_img = predicted_val_img * mask + val_diff_img * (1 - mask)
+                img = torch.cat([val_pre_img, val_diff_img, predicted_val_img], dim=0)
+                img = rearrange(img, '(v h1 w1) c h w -> c (h1 h) (w1 v w)', w1=3, v=1)
+                writer.add_image('Out-dist MAE Image Comparison', (img + 1) / 2, global_step=e)
 
     writer.close()

@@ -8,24 +8,11 @@ from tqdm import tqdm
 
 from model_diff import *
 from utils import setup_seed
-from common import evaluate, PreDiffractionDataset
+from common import evaluate, load_datasets_and_dataloaders
 
-from torch.utils.data import Dataset, DataLoader
 from torchvision.transforms import ToTensor, Compose
 import os
 
-
-
-def load_datasets_and_dataloaders(train_dir, test_dir, batch_size=128, num_workers=4):
-    transform = Compose([ToTensor()])
-
-    train_dataset = PreDiffractionDataset(root_dir=train_dir, transform=transform)
-    test_dataset = PreDiffractionDataset(root_dir=test_dir, transform=transform)
-
-    train_dataloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=num_workers)
-    test_dataloader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=num_workers)
-    
-    return train_dataset, test_dataset, train_dataloader, test_dataloader
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
@@ -43,10 +30,8 @@ if __name__ == '__main__':
     args = parser.parse_args()
     intensity_scale = 1000.
     N = 32
-    #from torch_probe import probe
-    # probe use by model. NOT necessarily the same as the simulation probe
     from probe_torch import create_centered_square
-    probe = create_centered_square(N = N)
+    probe = create_centered_square(N=N)
 
     setup_seed(args.seed)
 
@@ -56,25 +41,20 @@ if __name__ == '__main__':
     assert batch_size % load_batch_size == 0
     steps_per_update = batch_size // load_batch_size
 
-    train_dataset, val_dataset, dataloader, test_dataloader = load_datasets_and_dataloaders(
+    train_dataset, in_dist_val_dataset, out_dist_val_dataset, dataloader, in_dist_val_dataloader, out_dist_val_dataloader = load_datasets_and_dataloaders(
         train_dir='bigprobe_images/train',
-        test_dir='diffracted_images/test',
+        in_dist_val_dir='bigprobe_images/test',
+        out_dist_val_dir='diffracted_images/test',
         batch_size=batch_size
     )
 
-    # Initialize TensorBoard SummaryWriter
     tboard_name = args.model_path.split('.')[0]
     writer = SummaryWriter(os.path.join('logs', 'pinn', tboard_name))
-    #writer = SummaryWriter(os.path.join('logs', tboard_name))
-    #writer = SummaryWriter(os.path.join('logs', 'mae_pretrain'))
 
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    probe = (probe).to(device)
+    probe = probe.to(device)
 
-    # TODO use partial function application so that the syntax can be identical 
-    # t the other module
-    model = MAE_ViT(mask_ratio=args.mask_ratio, intensity_scale=intensity_scale,
-                    probe=probe).to(device)
+    model = MAE_ViT(mask_ratio=args.mask_ratio, intensity_scale=intensity_scale, probe=probe).to(device)
     optim = torch.optim.AdamW(model.parameters(), lr=args.base_learning_rate * args.batch_size / 256, betas=(0.9, 0.95), weight_decay=args.weight_decay)
     lr_func = lambda epoch: min((epoch + 1) / (args.warmup_epoch + 1e-8), 0.5 * (math.cos(epoch / args.total_epoch * math.pi) + 1))
     lr_scheduler = torch.optim.lr_scheduler.LambdaLR(optim, lr_lambda=lr_func, verbose=True)
@@ -85,7 +65,6 @@ if __name__ == '__main__':
     for e in range(args.total_epoch):
         model.train()
         losses = []
-        running_loss = 0.0
         for i, (_, diff_img) in enumerate(tqdm(iter(dataloader)), 1):
             step_count += 1
             diff_img = diff_img.to(device)
@@ -105,24 +84,34 @@ if __name__ == '__main__':
         if e % args.val_interval == 0:
             model.eval()
             with torch.no_grad():
-                val_loss = evaluate(model, test_dataloader, args.mask_ratio, device)
-            writer.add_scalar('Loss/validation', val_loss, global_step=e)
-            print(f'In epoch {e}, validation loss is {val_loss}.')
+                in_dist_val_loss = evaluate(model, in_dist_val_dataloader, args.mask_ratio, device)
+                out_dist_val_loss = evaluate(model, out_dist_val_dataloader, args.mask_ratio, device)
+            writer.add_scalar('Loss/in_dist_validation', in_dist_val_loss, global_step=e)
+            writer.add_scalar('Loss/out_dist_validation', out_dist_val_loss, global_step=e)
+            print(f'In epoch {e}, in-distribution validation loss is {in_dist_val_loss}, out-of-distribution validation loss is {out_dist_val_loss}.')
 
-            ''' visualize the first 16 predicted images on val dataset '''
+            ''' visualize the first 16 predicted images on in-distribution val dataset '''
             with torch.no_grad():
-                val_pre_img, val_diff_img = zip(*[val_dataset[i] for i in range(16)])
+                val_pre_img, val_diff_img = zip(*[in_dist_val_dataset[i] for i in range(16)])
                 val_pre_img = torch.stack(val_pre_img).to(device)
                 val_diff_img = torch.stack(val_diff_img).to(device)
-                # TODO partial?
                 predicted_val_img, mask, intermediate_img = model.forward_with_intermediate(val_diff_img)
                 predicted_val_img = predicted_val_img * mask + val_diff_img * (1 - mask)
                 img = torch.cat([val_pre_img, intermediate_img, predicted_val_img], dim=0)
                 img = rearrange(img, '(v h1 w1) c h w -> c (h1 h) (w1 v w)', w1=3, v=1)
-                writer.add_image('MAE Image Comparison', (img), global_step=e)
+                writer.add_image('In-dist MAE Image Comparison', img, global_step=e)
 
-        ''' save model '''
-        # TODO partial application
+            ''' visualize the first 16 predicted images on out-of-distribution val dataset '''
+            with torch.no_grad():
+                val_pre_img, val_diff_img = zip(*[out_dist_val_dataset[i] for i in range(16)])
+                val_pre_img = torch.stack(val_pre_img).to(device)
+                val_diff_img = torch.stack(val_diff_img).to(device)
+                predicted_val_img, mask, intermediate_img = model.forward_with_intermediate(val_diff_img)
+                predicted_val_img = predicted_val_img * mask + val_diff_img * (1 - mask)
+                img = torch.cat([val_pre_img, intermediate_img, predicted_val_img], dim=0)
+                img = rearrange(img, '(v h1 w1) c h w -> c (h1 h) (w1 v w)', w1=3, v=1)
+                writer.add_image('Out-dist MAE Image Comparison', img, global_step=e)
+
         model.save_model(args.model_path, probe)
 
     writer.close()
