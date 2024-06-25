@@ -123,14 +123,15 @@ def diffract_obj(sample, draw_poisson=True):
         return amplitude
 
 def illuminate_and_diffract(Y_complex, probe, intensity_scale=None,
-                            draw_poisson = True):
+                            draw_poisson = True, norm = True):
     if intensity_scale is None:
         intensity_scale = scale_nphotons(torch.abs(Y_complex) * probe).item()
     obj = intensity_scale * Y_complex
     obj = obj * probe.to(obj.dtype)
 
     X = diffract_obj(obj, draw_poisson = draw_poisson)
-    X = X / intensity_scale
+    if norm:
+        X = X / intensity_scale
 
     return X
 
@@ -175,6 +176,9 @@ def map_to_unit_interval(tensor: torch.Tensor) -> torch.Tensor:
 
 def diffraction_from_channels(batch, probe, intensity_scale = 1000.,
                               draw_poisson = True):
+    """
+    Return diffracted *intensity*, units of photons
+    """
     dprint(f"Input batch shape: {batch.shape}, Data type: {batch.dtype}")
 
     # -1 bias helps center activations when the amplitude ranges between 0 and 1
@@ -194,7 +198,7 @@ def diffraction_from_channels(batch, probe, intensity_scale = 1000.,
     
     # Apply the illuminate_and_diffract() function
     X = illuminate_and_diffract(Y_complex, probe, intensity_scale= intensity_scale,
-                                draw_poisson=draw_poisson)
+                                draw_poisson=draw_poisson, norm = False)
     
     dprint(f"Diffracted X shape: {X.shape}, Data type: {X.dtype}")
     
@@ -203,4 +207,4 @@ def diffraction_from_channels(batch, probe, intensity_scale = 1000.,
     
     dprint(f"Diffracted batch shape: {diffracted_batch.shape}, Data type: {diffracted_batch.dtype}")
     
-    return diffracted_batch # diffracted amplitude
+    return diffracted_batch

@@ -9,6 +9,11 @@ from timm.models.vision_transformer import Block
 
 from diffsim_torch import diffraction_from_channels
 
+def check_tensor_integer(tensor):
+    # Check if the tensor's dtype is one of the integer types in PyTorch
+    assert tensor.dtype in (torch.int16, torch.int32, torch.int64), "The tensor must have an integer type"
+
+
 def random_indexes(size: int):
     forward_indexes = np.arange(size)
     np.random.shuffle(forward_indexes)
@@ -129,8 +134,8 @@ class MAE_Decoder(torch.nn.Module):
         self.img = img  # Store the intermediate img tensor
         mask = self.patch2img(mask)
 
-        amplitude = self.diffract(img, self.probe)
-        return amplitude, mask
+        intensity = self.diffract(img, self.probe)
+        return intensity, mask
 
 from functools import partial
 class MAE_ViT(torch.nn.Module):
@@ -151,17 +156,34 @@ class MAE_ViT(torch.nn.Module):
         self.encoder = MAE_Encoder(image_size, patch_size, emb_dim, encoder_layer, encoder_head, mask_ratio)
         self.decoder = MAE_Decoder(image_size, patch_size, emb_dim, decoder_layer, decoder_head,
                                    intensity_scale=intensity_scale, probe=probe)
+        self.intensity_scale = intensity_scale
+        self.mask_ratio = mask_ratio
 
     def forward(self, img):
-        features, backward_indexes = self.encoder(img)
-        predicted_img, mask = self.decoder(features, backward_indexes)
-        return predicted_img, mask
+        #check_tensor_integer(img)
+        img_dimensionless_amp = torch.sqrt(img) / self.intensity_scale
+        features, backward_indexes = self.encoder(img_dimensionless_amp)
+        predicted_amp, mask = self.decoder(features, backward_indexes)
+        predicted_dimensionless_amp = predicted_amp / self.intensity_scale
+        #predicted_img_photons_lambda = (predicted_amp)**2
+        return {
+            'diff_img': img,
+            'target_amplitude': img_dimensionless_amp,
+            'predicted_amplitude': predicted_dimensionless_amp,
+            'mask': mask,
+            'mask_ratio': self.mask_ratio,
+            'intensity_scale': self.intensity_scale
+        }
 
     def forward_with_intermediate(self, img):
         features, backward_indexes = self.encoder(img)
         predicted_img, mask = self.decoder(features, backward_indexes)
         intermediate_img = self.decoder.img
-        return predicted_img, mask, intermediate_img
+        return {
+            'predicted_img': predicted_img,
+            'mask': mask,
+            'intermediate_img': intermediate_img
+        }
 
     def save_model(self, file_path, probe):
         save_dict = {
@@ -174,11 +196,9 @@ class MAE_ViT(torch.nn.Module):
     def load_model(cls, file_path):
         checkpoint = torch.load(file_path)
         probe = checkpoint['probe']
-#        train_losses = checkpoint['train_losses']
-#        val_losses = checkpoint['val_losses']
-        model = cls(probe = probe)
+        model = cls(probe=probe)
         model.load_state_dict(checkpoint['model_state_dict'])
-        model.probe = probe # TODO check if this is already set
+        model.probe = probe
         return model
 
 class ViT_Classifier(torch.nn.Module):
