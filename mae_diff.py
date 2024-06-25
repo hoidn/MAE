@@ -42,6 +42,7 @@ if __name__ == '__main__':
     parser.add_argument('--warmup_epoch', type=int, default=200)
     parser.add_argument('--model_path', type=str, default='vit-t-mae.pt')
     parser.add_argument('--val_interval', type=int, default=1)
+    parser.add_argument('--input_size', type=int, default=32, help='Input image size')
 
     args = parser.parse_args()
     intensity_scale = 30.
@@ -70,7 +71,8 @@ if __name__ == '__main__':
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     probe = probe.to(device)
 
-    model = MAE_ViT(mask_ratio=args.mask_ratio, intensity_scale=intensity_scale, probe=probe).to(device)
+    model = MAE_ViT(mask_ratio=args.mask_ratio, intensity_scale=intensity_scale, probe=probe,
+                    input_size=args.input_size).to(device)
     optim = torch.optim.AdamW(model.parameters(), lr=args.base_learning_rate * args.batch_size / 256, betas=(0.9, 0.95), weight_decay=args.weight_decay)
     lr_func = lambda epoch: min((epoch + 1) / (args.warmup_epoch + 1e-8), 0.5 * (math.cos(epoch / args.total_epoch * math.pi) + 1))
     lr_scheduler = torch.optim.lr_scheduler.LambdaLR(optim, lr_lambda=lr_func, verbose=True)
@@ -86,10 +88,10 @@ if __name__ == '__main__':
             step_count += 1
             diff_img = diff_img.to(device)
             outputs = model(diff_img)
-            #mae_mse_loss = mae_mse(outputs)
-            nll = negative_log_likelihood(outputs)
-            #total_loss = mae_mse_weight * mae_mse_loss
-            total_loss = nll
+            mae_mse_loss = mae_mse(outputs)
+            #nll = negative_log_likelihood(outputs)
+            #total_loss = nll
+            total_loss = mae_mse_loss
             total_loss.backward()
             if step_count % steps_per_update == 0:
                 optim.step()

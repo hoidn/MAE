@@ -43,8 +43,7 @@ class PatchShuffle(torch.nn.Module):
 
 class MAE_Encoder(torch.nn.Module):
     def __init__(self,
-                 image_size=32,
-                 patch_size=2,
+                 input_size=64,
                  emb_dim=192,
                  num_layer=12,
                  num_head=3,
@@ -52,11 +51,12 @@ class MAE_Encoder(torch.nn.Module):
                  ) -> None:
         super().__init__()
 
+        self.patch_size = input_size // 16
         self.cls_token = torch.nn.Parameter(torch.zeros(1, 1, emb_dim))
-        self.pos_embedding = torch.nn.Parameter(torch.zeros((image_size // patch_size) ** 2, 1, emb_dim))
+        self.pos_embedding = torch.nn.Parameter(torch.zeros((input_size // self.patch_size) ** 2, 1, emb_dim))
         self.shuffle = PatchShuffle(mask_ratio)
 
-        self.patchify = torch.nn.Conv2d(3, emb_dim, patch_size, patch_size)
+        self.patchify = torch.nn.Conv2d(3, emb_dim, self.patch_size, self.patch_size)
 
         self.transformer = torch.nn.Sequential(*[Block(emb_dim, num_head) for _ in range(num_layer)])
 
@@ -84,8 +84,7 @@ class MAE_Encoder(torch.nn.Module):
 
 class MAE_Decoder(torch.nn.Module):
     def __init__(self,
-                 image_size=32,
-                 patch_size=2,
+                 input_size=32,
                  emb_dim=192,
                  num_layer=4,
                  num_head=3,
@@ -94,13 +93,14 @@ class MAE_Decoder(torch.nn.Module):
                  ) -> None:
         super().__init__()
 
+        self.patch_size = input_size // 16
         self.mask_token = torch.nn.Parameter(torch.zeros(1, 1, emb_dim))
-        self.pos_embedding = torch.nn.Parameter(torch.zeros((image_size // patch_size) ** 2 + 1, 1, emb_dim))
+        self.pos_embedding = torch.nn.Parameter(torch.zeros((input_size // self.patch_size) ** 2 + 1, 1, emb_dim))
 
         self.transformer = torch.nn.Sequential(*[Block(emb_dim, num_head) for _ in range(num_layer)])
 
-        self.head = torch.nn.Linear(emb_dim, 3 * patch_size ** 2)
-        self.patch2img = Rearrange('(h w) b (c p1 p2) -> b c (h p1) (w p2)', p1=patch_size, p2=patch_size, h=image_size//patch_size)
+        self.head = torch.nn.Linear(emb_dim, 3 * self.patch_size ** 2)
+        self.patch2img = Rearrange('(h w) b (c p1 p2) -> b c (h p1) (w p2)', p1=self.patch_size, p2=self.patch_size, h=input_size//self.patch_size)
         self.diffract = partial(diffraction_from_channels, intensity_scale=intensity_scale, draw_poisson=False)
         if probe is None:
             raise ValueError
@@ -140,8 +140,7 @@ class MAE_Decoder(torch.nn.Module):
 from functools import partial
 class MAE_ViT(torch.nn.Module):
     def __init__(self,
-                 image_size=32,
-                 patch_size=2,
+                 input_size=64,
                  emb_dim=192,
                  encoder_layer=12,
                  encoder_head=3,
@@ -153,19 +152,20 @@ class MAE_ViT(torch.nn.Module):
                  ) -> None:
         super().__init__()
 
-        self.encoder = MAE_Encoder(image_size, patch_size, emb_dim, encoder_layer, encoder_head, mask_ratio)
-        self.decoder = MAE_Decoder(image_size, patch_size, emb_dim, decoder_layer, decoder_head,
+        self.input_size = input_size
+        self.patch_size = input_size // 16
+
+        self.encoder = MAE_Encoder(input_size, emb_dim, encoder_layer, encoder_head, mask_ratio)
+        self.decoder = MAE_Decoder(input_size, emb_dim, decoder_layer, decoder_head,
                                    intensity_scale=intensity_scale, probe=probe)
         self.intensity_scale = intensity_scale
         self.mask_ratio = mask_ratio
 
     def forward(self, img):
-        #check_tensor_integer(img)
         img_dimensionless_amp = torch.sqrt(img) / self.intensity_scale
         features, backward_indexes = self.encoder(img_dimensionless_amp)
         predicted_amp, mask = self.decoder(features, backward_indexes)
         predicted_dimensionless_amp = predicted_amp / self.intensity_scale
-        #predicted_img_photons_lambda = (predicted_amp)**2
         return {
             'diff_img': img,
             'target_amplitude': img_dimensionless_amp,
