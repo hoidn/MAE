@@ -5,15 +5,26 @@ import torch
 from torch.utils.tensorboard import SummaryWriter
 from torchvision.transforms import ToTensor, Compose, Normalize
 from tqdm import tqdm
+import os
 
 from model import *
 from utils import setup_seed
-from common import evaluate, load_datasets_and_dataloaders
+from common import load_datasets_and_dataloaders, vscale_tensor
 
-from PIL import Image
-from torch.utils.data import Dataset, DataLoader
-from torchvision.transforms import ToTensor, Compose
-import os
+def evaluate(model, dataloader, mask_ratio, device):
+    """
+    mean absolute error
+    """
+    model.eval()
+    total_loss = 0
+    with torch.no_grad():
+        for _, diff_img in dataloader:
+            diff_img = diff_img.to(device)
+            predicted_img, mask = model(diff_img)
+            loss = torch.mean(torch.abs((predicted_img - diff_img)) * mask) / mask_ratio
+            #loss = torch.mean((predicted_img - diff_img) ** 2 * mask) / mask_ratio
+            total_loss += loss.item()
+    return total_loss / len(dataloader)
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
@@ -42,7 +53,8 @@ if __name__ == '__main__':
         train_dir='bigprobe_images/train',
         in_dist_val_dir='bigprobe_images/test',
         out_dist_val_dir='diffracted_images/test',
-        batch_size=batch_size
+        batch_size=batch_size,
+        normalize = True
     )
 
     tboard_name = args.model_path.split('.')[0]
@@ -92,7 +104,7 @@ if __name__ == '__main__':
                 val_diff_img = torch.stack(val_diff_img).to(device)
                 predicted_val_img, mask = model(val_diff_img)
                 predicted_val_img = predicted_val_img * mask + val_diff_img * (1 - mask)
-                img = torch.cat([val_pre_img, val_diff_img, predicted_val_img], dim=0)
+                img = torch.cat([vscale_tensor(val_pre_img), val_diff_img, vscale_tensor(predicted_val_img)], dim=0)
                 img = rearrange(img, '(v h1 w1) c h w -> c (h1 h) (w1 v w)', w1=3, v=1)
                 writer.add_image('In-dist MAE Image Comparison', (img + 1) / 2, global_step=e)
 
@@ -103,7 +115,7 @@ if __name__ == '__main__':
                 val_diff_img = torch.stack(val_diff_img).to(device)
                 predicted_val_img, mask = model(val_diff_img)
                 predicted_val_img = predicted_val_img * mask + val_diff_img * (1 - mask)
-                img = torch.cat([val_pre_img, val_diff_img, predicted_val_img], dim=0)
+                img = torch.cat([vscale_tensor(val_pre_img), val_diff_img, vscale_tensor(predicted_val_img)], dim=0)
                 img = rearrange(img, '(v h1 w1) c h w -> c (h1 h) (w1 v w)', w1=3, v=1)
                 writer.add_image('Out-dist MAE Image Comparison', (img + 1) / 2, global_step=e)
 

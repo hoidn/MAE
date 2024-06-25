@@ -7,13 +7,16 @@ from torch.utils.tensorboard import SummaryWriter
 from diffsim_torch import diffraction_from_channels
 from probe_torch import get_default_probe
 
-intensity_scale = 10.
+intensity_scale = 30.
 
-def save_array(array, save_path):
+def save_array(array, save_path, intensity_scale=None):
     """
-    Save a numpy array to a .npy file.
+    Save a numpy array and intensity_scale (if provided) to a .npz file.
     """
-    np.save(save_path, array)
+    if intensity_scale is not None:
+        np.savez(save_path, array=array, intensity_scale=intensity_scale)
+    else:
+        np.save(save_path, array)
 
 def generate_datasets(intensity_scale=intensity_scale, probe_scale=0.55):
     """
@@ -48,7 +51,7 @@ def generate_datasets(intensity_scale=intensity_scale, probe_scale=0.55):
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
     probe = get_default_probe(probe_scale=probe_scale)
-    
+
     def process_and_save(dataloader, save_dir, phase):
         for batch_idx, (batch, _) in enumerate(dataloader):
             pre_diffraction_batch = (batch + torch.flip(batch, dims=[2, 3])) / 2
@@ -58,10 +61,10 @@ def generate_datasets(intensity_scale=intensity_scale, probe_scale=0.55):
             print(f"Processing {phase} batch {batch_idx + 1}")
             print(f"Probe mean: {probe.mean().item()}")
             for i, (pre_img, diff_img) in enumerate(zip(pre_diffraction_batch, diffracted_batch)):
-                pre_save_path = os.path.join(save_dir, f'{phase}_pre_{batch_idx}_{i}.npy')
-                diff_save_path = os.path.join(save_dir, f'{phase}_diff_{batch_idx}_{i}.npy')
-                save_array(pre_img.cpu().numpy(), pre_save_path)
-                save_array(diff_img.cpu().numpy(), diff_save_path)
+                pre_save_path = os.path.join(save_dir, f'{phase}_pre_{batch_idx}_{i}.npz')
+                diff_save_path = os.path.join(save_dir, f'{phase}_diff_{batch_idx}_{i}.npz')
+                save_array(pre_img.cpu().numpy(), pre_save_path, intensity_scale)
+                save_array(diff_img.cpu().numpy(), diff_save_path, intensity_scale)
             writer.add_images(f'Pre-diffraction Images/{phase}', pre_diffraction_batch, batch_idx, dataformats='NCHW')
             writer.add_images(f'Diffracted Images/{phase}', diffracted_batch, batch_idx, dataformats='NCHW')
         return pre_diffraction_batch, diffracted_batch

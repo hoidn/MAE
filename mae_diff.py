@@ -8,7 +8,8 @@ from tqdm import tqdm
 
 from model_diff import *
 from utils import setup_seed
-from common import evaluate, load_datasets_and_dataloaders, mae_mse
+from common import evaluate, load_datasets_and_dataloaders, vscale_tensor
+from losses import mae_mse, mae_mae
 from torch.distributions import Poisson
 
 poisson_inflation = 0.1
@@ -28,6 +29,7 @@ def negative_log_likelihood(inputdict):
     log_prob = poisson_dist.log_prob(inputdict['diff_img'].to(torch.int64))
     return -torch.sum(log_prob)
 
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--seed', type=int, default=42)
@@ -42,7 +44,7 @@ if __name__ == '__main__':
     parser.add_argument('--val_interval', type=int, default=1)
 
     args = parser.parse_args()
-    intensity_scale = 10.
+    intensity_scale = 30.
     N = 32
     from probe_torch import create_centered_square
     probe = create_centered_square(N=N)
@@ -73,7 +75,7 @@ if __name__ == '__main__':
     lr_func = lambda epoch: min((epoch + 1) / (args.warmup_epoch + 1e-8), 0.5 * (math.cos(epoch / args.total_epoch * math.pi) + 1))
     lr_scheduler = torch.optim.lr_scheduler.LambdaLR(optim, lr_lambda=lr_func, verbose=True)
 
-    mae_mse_weight = 1.0  # Relative weight for the mae_mse los
+    #mae_mse_weight = 1.0  # Relative weight for the mae_mse los
     step_count = 0
     optim.zero_grad()
 
@@ -84,7 +86,7 @@ if __name__ == '__main__':
             step_count += 1
             diff_img = diff_img.to(device)
             outputs = model(diff_img)
-            mae_mse_loss = mae_mse(outputs)
+            #mae_mse_loss = mae_mse(outputs)
             nll = negative_log_likelihood(outputs)
             #total_loss = mae_mse_weight * mae_mse_loss
             total_loss = nll
@@ -102,8 +104,8 @@ if __name__ == '__main__':
         if e % args.val_interval == 0:
             model.eval()
             with torch.no_grad():
-                in_dist_val_loss = evaluate(model, in_dist_val_dataloader, [mae_mse], [1.])
-                out_dist_val_loss = evaluate(model, out_dist_val_dataloader, [mae_mse], [1.])
+                in_dist_val_loss = evaluate(model, in_dist_val_dataloader, [mae_mae], [1.])
+                out_dist_val_loss = evaluate(model, out_dist_val_dataloader, [mae_mae], [1.])
             writer.add_scalar('Loss/in_dist_validation', in_dist_val_loss, global_step=e)
             writer.add_scalar('Loss/out_dist_validation', out_dist_val_loss, global_step=e)
             print(f'In epoch {e}, in-distribution validation loss is {in_dist_val_loss}, out-of-distribution validation loss is {out_dist_val_loss}.')
@@ -114,7 +116,7 @@ if __name__ == '__main__':
                 val_diff_img = torch.stack(val_diff_img).to(device)
                 outputs = model.forward_with_intermediate(val_diff_img)
                 predicted_val_img = outputs['predicted_img'] * outputs['mask'] + val_diff_img * (1 - outputs['mask'])
-                img = torch.cat([val_pre_img, outputs['intermediate_img'], predicted_val_img], dim=0)
+                img = torch.cat([vscale_tensor(val_pre_img), outputs['intermediate_img'], vscale_tensor(predicted_val_img)], dim=0)
                 img = rearrange(img, '(v h1 w1) c h w -> c (h1 h) (w1 v w)', w1=3, v=1)
                 writer.add_image('In-dist MAE Image Comparison', img, global_step=e)
 
@@ -124,7 +126,7 @@ if __name__ == '__main__':
                 val_diff_img = torch.stack(val_diff_img).to(device)
                 outputs = model.forward_with_intermediate(val_diff_img)
                 predicted_val_img = outputs['predicted_img'] * outputs['mask'] + val_diff_img * (1 - outputs['mask'])
-                img = torch.cat([val_pre_img, outputs['intermediate_img'], predicted_val_img], dim=0)
+                img = torch.cat([vscale_tensor(val_pre_img), outputs['intermediate_img'], vscale_tensor(predicted_val_img)], dim=0)
                 img = rearrange(img, '(v h1 w1) c h w -> c (h1 h) (w1 v w)', w1=3, v=1)
                 writer.add_image('Out-dist MAE Image Comparison', img, global_step=e)
 
