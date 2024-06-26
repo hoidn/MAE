@@ -7,7 +7,7 @@ from torch.utils.tensorboard import SummaryWriter
 from diffsim_torch import diffraction_from_channels
 from probe_torch import get_default_probe
 
-intensity_scale = 30.
+intensity_scale = 1000.
 
 def save_array(array, save_path, intensity_scale=None):
     """

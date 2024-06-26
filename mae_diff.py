@@ -45,7 +45,7 @@ if __name__ == '__main__':
     parser.add_argument('--input_size', type=int, default=32, help='Input image size')
 
     args = parser.parse_args()
-    intensity_scale = 30.
+    intensity_scale = 1000.
     N = 32
     from probe_torch import create_centered_square
     probe = create_centered_square(N=N)
@@ -89,9 +89,9 @@ if __name__ == '__main__':
             diff_img = diff_img.to(device)
             outputs = model(diff_img)
             mae_mse_loss = mae_mse(outputs)
-            #nll = negative_log_likelihood(outputs)
-            #total_loss = nll
-            total_loss = mae_mse_loss
+            nll = negative_log_likelihood(outputs)
+            total_loss = nll
+            #total_loss = mae_mse_loss
             total_loss.backward()
             if step_count % steps_per_update == 0:
                 optim.step()
@@ -106,8 +106,8 @@ if __name__ == '__main__':
         if e % args.val_interval == 0:
             model.eval()
             with torch.no_grad():
-                in_dist_val_loss = evaluate(model, in_dist_val_dataloader, [mae_mae], [1.])
-                out_dist_val_loss = evaluate(model, out_dist_val_dataloader, [mae_mae], [1.])
+                in_dist_val_loss = evaluate(model, in_dist_val_dataloader, [mae_mse], [1.])
+                out_dist_val_loss = evaluate(model, out_dist_val_dataloader, [mae_mse], [1.])
             writer.add_scalar('Loss/in_dist_validation', in_dist_val_loss, global_step=e)
             writer.add_scalar('Loss/out_dist_validation', out_dist_val_loss, global_step=e)
             print(f'In epoch {e}, in-distribution validation loss is {in_dist_val_loss}, out-of-distribution validation loss is {out_dist_val_loss}.')
@@ -118,9 +118,10 @@ if __name__ == '__main__':
                 val_diff_img = torch.stack(val_diff_img).to(device)
                 outputs = model.forward_with_intermediate(val_diff_img)
                 predicted_val_img = outputs['predicted_img'] * outputs['mask'] + val_diff_img * (1 - outputs['mask'])
-                img = torch.cat([vscale_tensor(val_pre_img), outputs['intermediate_img'], vscale_tensor(predicted_val_img)], dim=0)
+                img = torch.cat([vscale_tensor(val_pre_img), (outputs['intermediate_img'] + 1) / 2, vscale_tensor(predicted_val_img)], dim=0)
                 img = rearrange(img, '(v h1 w1) c h w -> c (h1 h) (w1 v w)', w1=3, v=1)
                 writer.add_image('In-dist MAE Image Comparison', img, global_step=e)
+                writer.add_histogram('In-dist real space amplitude histogram', outputs['intermediate_img'][:, :1].flatten(), global_step=e)
 
             with torch.no_grad():
                 val_pre_img, val_diff_img = zip(*[out_dist_val_dataset[i] for i in range(16)])
@@ -128,9 +129,10 @@ if __name__ == '__main__':
                 val_diff_img = torch.stack(val_diff_img).to(device)
                 outputs = model.forward_with_intermediate(val_diff_img)
                 predicted_val_img = outputs['predicted_img'] * outputs['mask'] + val_diff_img * (1 - outputs['mask'])
-                img = torch.cat([vscale_tensor(val_pre_img), outputs['intermediate_img'], vscale_tensor(predicted_val_img)], dim=0)
+                img = torch.cat([vscale_tensor(val_pre_img), (outputs['intermediate_img'] + 1) / 2, vscale_tensor(predicted_val_img)], dim=0)
                 img = rearrange(img, '(v h1 w1) c h w -> c (h1 h) (w1 v w)', w1=3, v=1)
                 writer.add_image('Out-dist MAE Image Comparison', img, global_step=e)
+                writer.add_histogram('Out-dist real space amplitude histogram', outputs['intermediate_img'][:, :1].flatten(), global_step=e)
 
         model.save_model(args.model_path, probe)
 

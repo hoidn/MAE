@@ -21,8 +21,8 @@ def evaluate(model, dataloader, mask_ratio, device):
         for _, diff_img in dataloader:
             diff_img = diff_img.to(device)
             predicted_img, mask = model(diff_img)
-            loss = torch.mean(torch.abs((predicted_img - diff_img)) * mask) / mask_ratio
-            #loss = torch.mean((predicted_img - diff_img) ** 2 * mask) / mask_ratio
+            #loss = torch.mean(torch.abs((predicted_img - diff_img)) * mask) / mask_ratio
+            loss = torch.mean((predicted_img - diff_img) ** 2 * mask) / mask_ratio
             total_loss += loss.item()
     return total_loss / len(dataloader)
 
