@@ -7,7 +7,7 @@ def vscale_tensor(tensor: torch.Tensor) -> torch.Tensor:
     """
     scale for display
     """
-    tensor = tensor + 0.5
+    tensor = tensor + .01
     tensor = torch.log(tensor)
     tensor_min = tensor.min()
     tensor_max = tensor.max()

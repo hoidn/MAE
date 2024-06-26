@@ -105,7 +105,7 @@ if __name__ == '__main__':
                 predicted_val_img, mask = model(val_diff_img)
                 predicted_val_img = predicted_val_img * mask + val_diff_img * (1 - mask)
                 img = torch.cat([vscale_tensor(val_pre_img), val_diff_img, vscale_tensor(predicted_val_img)], dim=0)
-                img = rearrange(img, '(v h1 w1) c h w -> c (h1 h) (w1 v w)', w1=3, v=1)
+                img = rearrange(img, '(v h1 w1) c h w -> c (h1 h) (w1 v w)', w1=1, v=3)
                 writer.add_image('In-dist MAE Image Comparison', (img + 1) / 2, global_step=e)
 
             ''' visualize the first 16 predicted images on out-of-distribution val dataset '''
@@ -116,7 +116,7 @@ if __name__ == '__main__':
                 predicted_val_img, mask = model(val_diff_img)
                 predicted_val_img = predicted_val_img * mask + val_diff_img * (1 - mask)
                 img = torch.cat([vscale_tensor(val_pre_img), val_diff_img, vscale_tensor(predicted_val_img)], dim=0)
-                img = rearrange(img, '(v h1 w1) c h w -> c (h1 h) (w1 v w)', w1=3, v=1)
+                img = rearrange(img, '(v h1 w1) c h w -> c (h1 h) (w1 v w)', w1=1, v=3)
                 writer.add_image('Out-dist MAE Image Comparison', (img + 1) / 2, global_step=e)
 
     writer.close()

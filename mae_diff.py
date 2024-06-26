@@ -118,8 +118,9 @@ if __name__ == '__main__':
                 val_diff_img = torch.stack(val_diff_img).to(device)
                 outputs = model.forward(val_diff_img)
                 predicted_val_img = outputs['predicted_amplitude'] 
-                img = torch.cat([vscale_tensor(val_pre_img), (outputs['intermediate_img'] + 1) / 2, vscale_tensor(predicted_val_img)], dim=0)
-                img = rearrange(img, '(v h1 w1) c h w -> c (h1 h) (w1 v w)', w1=3, v=1)
+                img = torch.cat([val_pre_img, (outputs['intermediate_img'] + 1) / 2, vscale_tensor(val_diff_img),
+                                 vscale_tensor((val_diff_img.sqrt() / outputs['intensity_scale']))], dim=0)
+                img = rearrange(img, '(v h1 w1) c h w -> c (h1 h) (w1 v w)', w1=1, v=4)
                 writer.add_image('In-dist MAE Image Comparison', img, global_step=e)
                 writer.add_histogram('In-dist real space amplitude histogram', outputs['intermediate_img'][:, :1].flatten(), global_step=e)
 
@@ -129,8 +130,10 @@ if __name__ == '__main__':
                 val_diff_img = torch.stack(val_diff_img).to(device)
                 outputs = model.forward(val_diff_img)
                 predicted_val_img = outputs['predicted_amplitude'] 
-                img = torch.cat([vscale_tensor(val_pre_img), (outputs['intermediate_img'] + 1) / 2, vscale_tensor(predicted_val_img)], dim=0)
-                img = rearrange(img, '(v h1 w1) c h w -> c (h1 h) (w1 v w)', w1=3, v=1)
+                # TODO encapsulate
+                img = torch.cat([val_pre_img, (outputs['intermediate_img'] + 1) / 2, vscale_tensor(val_diff_img),
+                                 vscale_tensor((val_diff_img.sqrt() / outputs['intensity_scale']))], dim=0)
+                img = rearrange(img, '(v h1 w1) c h w -> c (h1 h) (w1 v w)', w1=1, v=4)
                 writer.add_image('Out-dist MAE Image Comparison', img, global_step=e)
                 writer.add_histogram('Out-dist real space amplitude histogram', outputs['intermediate_img'][:, :1].flatten(), global_step=e)
 
