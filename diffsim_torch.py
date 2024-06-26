@@ -175,14 +175,14 @@ def map_to_unit_interval(tensor: torch.Tensor) -> torch.Tensor:
     return sigmoid_tensor
 
 def diffraction_from_channels(batch, probe, intensity_scale = 1000.,
-                              draw_poisson = True):
+                              draw_poisson = True, norm = False):
     """
     Return diffracted *intensity*, units of photons
     """
     dprint(f"Input batch shape: {batch.shape}, Data type: {batch.dtype}")
 
-    # -1 bias helps center activations when the amplitude ranges between 0 and 1
-    Y_I = torch.nn.functional.softplus(batch[:, 0] - 1)
+    #Y_I = map_to_unit_interval(batch[:, 0])# + batch[:, 2]) / 2  # Calculate Y_phi as the average of the second and third channels
+    Y_I = torch.nn.functional.softplus(batch[:, 0])
     Y_phi_input = (batch[:, 1] + batch[:, 2]) / 2
     Y_phi = Y_phi_input #* allow phase wrapping instead of squashing with tanh
 
@@ -198,7 +198,7 @@ def diffraction_from_channels(batch, probe, intensity_scale = 1000.,
     
     # Apply the illuminate_and_diffract() function
     X = illuminate_and_diffract(Y_complex, probe, intensity_scale= intensity_scale,
-                                draw_poisson=draw_poisson, norm = False)
+                                draw_poisson=draw_poisson, norm = norm)
     
     dprint(f"Diffracted X shape: {X.shape}, Data type: {X.dtype}")
     

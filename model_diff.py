@@ -101,7 +101,7 @@ class MAE_Decoder(torch.nn.Module):
 
         self.head = torch.nn.Linear(emb_dim, 3 * self.patch_size ** 2)
         self.patch2img = Rearrange('(h w) b (c p1 p2) -> b c (h p1) (w p2)', p1=self.patch_size, p2=self.patch_size, h=input_size//self.patch_size)
-        self.diffract = partial(diffraction_from_channels, intensity_scale=intensity_scale, draw_poisson=False)
+        self.diffract = partial(diffraction_from_channels, intensity_scale=intensity_scale, draw_poisson=False, norm = True)
         if probe is None:
             raise ValueError
         self.probe = probe
@@ -131,11 +131,10 @@ class MAE_Decoder(torch.nn.Module):
         mask[T-1:] = 1
         mask = take_indexes(mask, backward_indexes[1:] - 1)
         img = self.patch2img(patches)
-        self.img = img  # Store the intermediate img tensor
         mask = self.patch2img(mask)
 
-        intensity = self.diffract(img, self.probe)
-        return intensity, mask
+        amplitude = self.diffract(img, self.probe)
+        return amplitude, mask, img
 
 from functools import partial
 class MAE_ViT(torch.nn.Module):
@@ -164,25 +163,15 @@ class MAE_ViT(torch.nn.Module):
     def forward(self, img):
         img_dimensionless_amp = torch.sqrt(img) / self.intensity_scale
         features, backward_indexes = self.encoder(img_dimensionless_amp)
-        predicted_amp, mask = self.decoder(features, backward_indexes)
-        predicted_dimensionless_amp = predicted_amp / self.intensity_scale
+        predicted_dimensionless_amp, mask, realspace_img = self.decoder(features, backward_indexes)
         return {
             'diff_img': img,
             'target_amplitude': img_dimensionless_amp,
             'predicted_amplitude': predicted_dimensionless_amp,
             'mask': mask,
             'mask_ratio': self.mask_ratio,
-            'intensity_scale': self.intensity_scale
-        }
-
-    def forward_with_intermediate(self, img):
-        features, backward_indexes = self.encoder(img)
-        predicted_img, mask = self.decoder(features, backward_indexes)
-        intermediate_img = self.decoder.img
-        return {
-            'predicted_img': predicted_img,
-            'mask': mask,
-            'intermediate_img': intermediate_img
+            'intensity_scale': self.intensity_scale,
+            'intermediate_img': realspace_img
         }
 
     def save_model(self, file_path, probe):
@@ -234,7 +223,7 @@ if __name__ == '__main__':
     decoder = MAE_Decoder()
     features, backward_indexes = encoder(img)
     print(forward_indexes.shape)
-    predicted_img, mask = decoder(features, backward_indexes)
+    predicted_img, mask, _ = decoder(features, backward_indexes)
     print(predicted_img.shape)
     loss = torch.mean((predicted_img - img) ** 2 * mask / 0.75)
     print(loss)

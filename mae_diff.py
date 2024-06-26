@@ -116,8 +116,8 @@ if __name__ == '__main__':
                 val_pre_img, val_diff_img = zip(*[in_dist_val_dataset[i] for i in range(16)])
                 val_pre_img = torch.stack(val_pre_img).to(device)
                 val_diff_img = torch.stack(val_diff_img).to(device)
-                outputs = model.forward_with_intermediate(val_diff_img)
-                predicted_val_img = outputs['predicted_img'] * outputs['mask'] + val_diff_img * (1 - outputs['mask'])
+                outputs = model.forward(val_diff_img)
+                predicted_val_img = outputs['predicted_amplitude'] 
                 img = torch.cat([vscale_tensor(val_pre_img), (outputs['intermediate_img'] + 1) / 2, vscale_tensor(predicted_val_img)], dim=0)
                 img = rearrange(img, '(v h1 w1) c h w -> c (h1 h) (w1 v w)', w1=3, v=1)
                 writer.add_image('In-dist MAE Image Comparison', img, global_step=e)
@@ -127,8 +127,8 @@ if __name__ == '__main__':
                 val_pre_img, val_diff_img = zip(*[out_dist_val_dataset[i] for i in range(16)])
                 val_pre_img = torch.stack(val_pre_img).to(device)
                 val_diff_img = torch.stack(val_diff_img).to(device)
-                outputs = model.forward_with_intermediate(val_diff_img)
-                predicted_val_img = outputs['predicted_img'] * outputs['mask'] + val_diff_img * (1 - outputs['mask'])
+                outputs = model.forward(val_diff_img)
+                predicted_val_img = outputs['predicted_amplitude'] 
                 img = torch.cat([vscale_tensor(val_pre_img), (outputs['intermediate_img'] + 1) / 2, vscale_tensor(predicted_val_img)], dim=0)
                 img = rearrange(img, '(v h1 w1) c h w -> c (h1 h) (w1 v w)', w1=3, v=1)
                 writer.add_image('Out-dist MAE Image Comparison', img, global_step=e)
