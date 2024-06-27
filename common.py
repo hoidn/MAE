@@ -3,17 +3,6 @@ from torch.utils.data import Dataset, DataLoader
 import numpy as np
 import os
 
-def vscale_tensor(tensor: torch.Tensor) -> torch.Tensor:
-    """
-    scale for display
-    """
-    tensor = tensor + .01
-    tensor = torch.log(tensor)
-    tensor_min = tensor.min()
-    tensor_max = tensor.max()
-    tensor = (tensor - tensor_min) / (tensor_max - tensor_min)
-    return tensor
-
 def to_float(x):
     return x.item() if isinstance(x, torch.Tensor) else float(x)
 
@@ -116,3 +105,5 @@ def load_datasets_and_dataloaders(train_dir, in_dist_val_dir, out_dist_val_dir, 
     out_dist_val_dataloader = DataLoader(out_dist_val_dataset, batch_size=batch_size, shuffle=False, num_workers=num_workers, collate_fn=collate_fn)
 
     return train_dataset, in_dist_val_dataset, out_dist_val_dataset, train_dataloader, in_dist_val_dataloader, out_dist_val_dataloader
+
+

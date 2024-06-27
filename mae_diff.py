@@ -8,9 +8,12 @@ from tqdm import tqdm
 
 from model_diff import *
 from utils import setup_seed
-from common import evaluate, load_datasets_and_dataloaders, vscale_tensor
+from common import evaluate, load_datasets_and_dataloaders
 from losses import mae_mse, mae_mae
 from torch.distributions import Poisson
+
+from probe_torch import create_centered_circle
+from visualization import cat_images 
 
 poisson_inflation = 0.1
 
@@ -120,11 +123,8 @@ if __name__ == '__main__':
                 val_diff_img = torch.stack(val_diff_img).to(device)
                 outputs = model.forward(val_diff_img)
                 predicted_val_img = outputs['predicted_amplitude'] 
-                img = torch.cat([val_pre_img, (outputs['intermediate_img'] + 1) / 2, vscale_tensor(predicted_val_img),
-                                 vscale_tensor((val_diff_img.sqrt() / outputs['intensity_scale']))], dim=0)
+                img = cat_images(val_pre_img, val_diff_img, outputs, args, device)
                 img = rearrange(img, '(v h1 w1) c h w -> c (h1 h) (w1 v w)', w1=1, v=4)
-#                img = torch.cat([val_pre_img, (outputs['intermediate_img'] + 1) / 2, val_diff_img, vscale_tensor(predicted_val_img)], dim=0)
-#                img = rearrange(img, '(v h1 w1) c h w -> c (h1 h) (w1 v w)', w1=1, v=4)
                 writer.add_image('In-dist MAE Image Comparison', img, global_step=e)
                 writer.add_histogram('In-dist real space amplitude histogram', outputs['intermediate_img'][:, :1].flatten(), global_step=e)
 
@@ -135,8 +135,9 @@ if __name__ == '__main__':
                 outputs = model.forward(val_diff_img)
                 predicted_val_img = outputs['predicted_amplitude'] 
                 # TODO encapsulate
-                img = torch.cat([val_pre_img, (outputs['intermediate_img'] + 1) / 2, vscale_tensor(predicted_val_img),
-                                 vscale_tensor((val_diff_img.sqrt() / outputs['intensity_scale']))], dim=0)
+                img = cat_images(val_pre_img, val_diff_img, outputs, args, device)
+#                img = torch.cat([val_pre_img, (outputs['intermediate_img'] + 1) / 2, vscale_tensor(predicted_val_img),
+#                                 vscale_tensor((val_diff_img.sqrt() / outputs['intensity_scale']))], dim=0)
                 img = rearrange(img, '(v h1 w1) c h w -> c (h1 h) (w1 v w)', w1=1, v=4)
                 writer.add_image('Out-dist MAE Image Comparison', img, global_step=e)
                 writer.add_histogram('Out-dist real space amplitude histogram', outputs['intermediate_img'][:, :1].flatten(), global_step=e)
