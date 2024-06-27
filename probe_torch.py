@@ -74,6 +74,47 @@ def create_centered_square(N: int = 64) -> torch.Tensor:
 
     return tensor
 
+import scipy.ndimage as ndimage
+
+def create_centered_circle(N: int = 64, sigma = 1) -> torch.Tensor:
+    """
+    Creates a tensor of size [N, N] where a circle with diameter N/2 is centered and its inside is set to 1, all others are 0.
+    Applies a Gaussian filter to smooth the edges of the circle.
+
+    Args:
+    N (int): The size of the tensor's width and height. Default is 64.
+    sigma (float): The sigma value for the Gaussian filter. Default is 1.
+
+    Returns:
+    torch.Tensor: A tensor where the central circle with diameter N/2 is filled with 1s and smoothed.
+    """
+    # Validate that N is even to ensure the circle can be perfectly centered
+    if N % 2 != 0:
+        raise ValueError("N must be an even number.")
+
+    # Create an N x N tensor of zeros
+    tensor = torch.zeros((N, N), dtype=torch.float)
+
+    # Calculate the center of the tensor
+    center = N / 2
+
+    # Calculate the radius of the circle (quarter of the tensor size)
+    radius = N / 4
+
+    # Iterate over each element in the tensor
+    for i in range(N):
+        for j in range(N):
+            # Calculate the distance from the center
+            distance = ((i - center + 0.5)**2 + (j - center + 0.5)**2)**0.5
+            # If the distance is less than the radius, set the element to 1
+            if distance < radius:
+                tensor[i, j] = 1
+
+    # Apply Gaussian filter to smooth the edges of the circle
+    smoothed_tensor = torch.from_numpy(ndimage.gaussian_filter(tensor.numpy(), sigma=sigma))
+
+    return smoothed_tensor
+
 params.cfg['N'] = 32
 probe = get_default_probe()#[:, :, 0]
 

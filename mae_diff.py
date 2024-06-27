@@ -47,8 +47,8 @@ if __name__ == '__main__':
     args = parser.parse_args()
     intensity_scale = 1000.
     N = 32
-    from probe_torch import create_centered_square
-    probe = create_centered_square(N=N)
+    from probe_torch import create_centered_circle
+    probe = create_centered_circle(N=N)
 
     setup_seed(args.seed)
 
@@ -88,10 +88,12 @@ if __name__ == '__main__':
             step_count += 1
             diff_img = diff_img.to(device)
             outputs = model(diff_img)
+            #mae_mae_loss = mae_mae(outputs)
             mae_mse_loss = mae_mse(outputs)
-            nll = negative_log_likelihood(outputs)
-            total_loss = nll
-            #total_loss = mae_mse_loss
+            #nll = negative_log_likelihood(outputs)
+            #total_loss = nll
+            total_loss = mae_mse_loss
+            #total_loss = mae_mae_loss
             total_loss.backward()
             if step_count % steps_per_update == 0:
                 optim.step()
@@ -118,9 +120,11 @@ if __name__ == '__main__':
                 val_diff_img = torch.stack(val_diff_img).to(device)
                 outputs = model.forward(val_diff_img)
                 predicted_val_img = outputs['predicted_amplitude'] 
-                img = torch.cat([val_pre_img, (outputs['intermediate_img'] + 1) / 2, vscale_tensor(val_diff_img),
+                img = torch.cat([val_pre_img, (outputs['intermediate_img'] + 1) / 2, vscale_tensor(predicted_val_img),
                                  vscale_tensor((val_diff_img.sqrt() / outputs['intensity_scale']))], dim=0)
                 img = rearrange(img, '(v h1 w1) c h w -> c (h1 h) (w1 v w)', w1=1, v=4)
+#                img = torch.cat([val_pre_img, (outputs['intermediate_img'] + 1) / 2, val_diff_img, vscale_tensor(predicted_val_img)], dim=0)
+#                img = rearrange(img, '(v h1 w1) c h w -> c (h1 h) (w1 v w)', w1=1, v=4)
                 writer.add_image('In-dist MAE Image Comparison', img, global_step=e)
                 writer.add_histogram('In-dist real space amplitude histogram', outputs['intermediate_img'][:, :1].flatten(), global_step=e)
 
@@ -131,7 +135,7 @@ if __name__ == '__main__':
                 outputs = model.forward(val_diff_img)
                 predicted_val_img = outputs['predicted_amplitude'] 
                 # TODO encapsulate
-                img = torch.cat([val_pre_img, (outputs['intermediate_img'] + 1) / 2, vscale_tensor(val_diff_img),
+                img = torch.cat([val_pre_img, (outputs['intermediate_img'] + 1) / 2, vscale_tensor(predicted_val_img),
                                  vscale_tensor((val_diff_img.sqrt() / outputs['intensity_scale']))], dim=0)
                 img = rearrange(img, '(v h1 w1) c h w -> c (h1 h) (w1 v w)', w1=1, v=4)
                 writer.add_image('Out-dist MAE Image Comparison', img, global_step=e)
