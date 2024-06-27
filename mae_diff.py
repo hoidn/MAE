@@ -5,14 +5,13 @@ import torch
 from torch.utils.tensorboard.writer import SummaryWriter
 from torchvision.transforms import ToTensor, Compose, Normalize
 from tqdm import tqdm
+from einops import rearrange
 
-from model_diff import *
+from model_diff import MAE_ViT
 from utils import setup_seed
 from common import evaluate, load_datasets_and_dataloaders
-
-from torchvision.transforms import ToTensor, Compose
-import os
-
+from visualization import cat_images, vscale_tensor, visualize_realspace
+from probe_torch import create_centered_circle, create_centered_square
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
@@ -26,12 +25,13 @@ if __name__ == '__main__':
     parser.add_argument('--warmup_epoch', type=int, default=200)
     parser.add_argument('--model_path', type=str, default='vit-t-mae.pt')
     parser.add_argument('--val_interval', type=int, default=1)
+    parser.add_argument('--input_size', type=int, default=32, help='Size of the input images')
 
     args = parser.parse_args()
     intensity_scale = 1000.
-    N = 32
-    from probe_torch import create_centered_square
-    probe = create_centered_square(N=N)
+    N = args.input_size
+    #probe = create_centered_square(N=N)
+    probe = create_centered_circle(N=N)
 
     setup_seed(args.seed)
 
@@ -96,9 +96,14 @@ if __name__ == '__main__':
                 val_pre_img = torch.stack(val_pre_img).to(device)
                 val_diff_img = torch.stack(val_diff_img).to(device)
                 predicted_val_img, mask, intermediate_img = model.forward_with_intermediate(val_diff_img)
-                predicted_val_img = predicted_val_img * mask + val_diff_img * (1 - mask)
-                img = torch.cat([val_pre_img, intermediate_img, predicted_val_img], dim=0)
-                img = rearrange(img, '(v h1 w1) c h w -> c (h1 h) (w1 v w)', w1=3, v=1)
+                outputs_dict = {
+                    'predicted_amplitude': predicted_val_img,
+                    'intermediate_img': intermediate_img,
+                    'intensity_scale': 1,
+                    'mask': mask
+                }
+                img, ncat = cat_images(val_pre_img, val_diff_img, outputs_dict, args, device)
+                img = rearrange(img, '(v h1 w1) c h w -> c (h1 h) (w1 v w)', w1=1, v=ncat)
                 writer.add_image('In-dist MAE Image Comparison', img, global_step=e)
 
             ''' visualize the first 16 predicted images on out-of-distribution val dataset '''
@@ -107,9 +112,14 @@ if __name__ == '__main__':
                 val_pre_img = torch.stack(val_pre_img).to(device)
                 val_diff_img = torch.stack(val_diff_img).to(device)
                 predicted_val_img, mask, intermediate_img = model.forward_with_intermediate(val_diff_img)
-                predicted_val_img = predicted_val_img * mask + val_diff_img * (1 - mask)
-                img = torch.cat([val_pre_img, intermediate_img, predicted_val_img], dim=0)
-                img = rearrange(img, '(v h1 w1) c h w -> c (h1 h) (w1 v w)', w1=3, v=1)
+                outputs_dict = {
+                    'predicted_amplitude': predicted_val_img,
+                    'intermediate_img': intermediate_img,
+                    'intensity_scale': 1,
+                    'mask': mask
+                }
+                img, ncat = cat_images(val_pre_img, val_diff_img, outputs_dict, args, device)
+                img = rearrange(img, '(v h1 w1) c h w -> c (h1 h) (w1 v w)', w1=1, v=ncat)
                 writer.add_image('Out-dist MAE Image Comparison', img, global_step=e)
 
         model.save_model(args.model_path, probe)
