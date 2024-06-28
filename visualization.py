@@ -131,6 +131,8 @@ def visualize_realspace(intermediate_img, mask):
     amplitude_rgb = amplitude.unsqueeze(1).repeat(1, 3, 1, 1)  # Expanding and repeating the channel dimension
     phase_rgb = phase.unsqueeze(1).repeat(1, 3, 1, 1)         # Expanding and repeating the channel dimension
 
+    amplitude_rgb = apply_mask_to_hsv_tensor(amplitude_rgb, mask)
+    phase_rgb = apply_mask_to_hsv_tensor(phase_rgb, mask)
     return {
         'amplitude': amplitude_rgb,
         'phase': phase_rgb,
@@ -141,13 +143,12 @@ def cat_images(val_pre_img, val_diff_img, outputs, args, device):
     predicted_val_img = outputs['predicted_amplitude'] 
     intermediate_img = outputs['intermediate_img']
     probe = outputs['probe']
-    imgtype = 'amplitude'
-    render_obj = lambda tensor, illumination: visualize_realspace(tensor,
+    render_obj = lambda tensor, illumination, imgtype: visualize_realspace(tensor,
                      illumination)[imgtype].to(device)
-    to_cat = [render_obj(val_pre_img, probe),
+    to_cat = [render_obj(val_pre_img, probe, 'rgb_tensor'),
                  vscale_tensor(val_diff_img),
                  vscale_tensor(val_diff_img) * (1 - outputs['mask']),
-                 render_obj(intermediate_img, create_centered_circle(args.input_size)),
+                 render_obj(intermediate_img, create_centered_circle(args.input_size), 'amplitude'),
                  vscale_tensor(predicted_val_img)
               ]
     ncat = len(to_cat)
