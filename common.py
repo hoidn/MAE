@@ -5,16 +5,38 @@ from torch.utils.data import Dataset
 import os
 import torch
 
-def evaluate(model, dataloader, mask_ratio, device):
+def to_float(x):
+    return x.item() if isinstance(x, torch.Tensor) else float(x)
+
+def evaluate(model, dataloader, loss_fns, loss_weights=None, device='cuda'):
     model.eval()
-    total_loss = 0
+    if loss_weights is None:
+        loss_weights = [1.0] * len(loss_fns)
+    elif len(loss_weights) < len(loss_fns):
+        loss_weights = loss_weights + [1.0] * (len(loss_fns) - len(loss_weights))
+    
+    total_losses = {fn.__name__: 0.0 for fn in loss_fns}
+    total_combined_loss = 0.0
+    num_batches = 0
+    
     with torch.no_grad():
-        for _, diff_img in dataloader:
-            diff_img = diff_img.to(device)
-            predicted_img, mask = model(diff_img)
-            loss = torch.mean((predicted_img - diff_img) ** 2 * mask) / mask_ratio
-            total_loss += loss.item()
-    return total_loss / len(dataloader)
+        for (_, img) in dataloader:
+            img = img.to(device)
+            output = model(img)
+            
+            batch_combined_loss = 0.0
+            for loss_fn, weight in zip(loss_fns, loss_weights):
+                loss = loss_fn(output)
+                total_losses[loss_fn.__name__] += to_float(loss)
+                batch_combined_loss += weight * to_float(loss)
+            
+            total_combined_loss += batch_combined_loss
+            num_batches += 1
+    
+    avg_losses = {name: total / num_batches for name, total in total_losses.items()}
+    avg_combined_loss = total_combined_loss / num_batches
+    
+    return avg_combined_loss
 
 class PreDiffractionDataset(Dataset):
     def __init__(self, root_dir, transform=None):

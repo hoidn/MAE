@@ -3,17 +3,51 @@ import argparse
 import math
 import torch
 from torch.utils.tensorboard.writer import SummaryWriter
-from torchvision.transforms import ToTensor, Compose, Normalize
 from tqdm import tqdm
 from einops import rearrange
 
 from model_diff import MAE_ViT
 from utils import setup_seed
 from common import evaluate, load_datasets_and_dataloaders
-from visualization import cat_images, vscale_tensor, visualize_realspace
-from probe_torch import create_centered_circle, create_centered_square
+from losses import mae_mse, mae_mae
+from torch.distributions import Poisson
+
+from probe_torch import create_centered_circle
+from visualization import cat_images
 from probe_torch import get_default_probe
-from produce_dataset import probe_scale
+
+poisson_inflation = 0.1
+
+def poisson_distribution(rate: torch.Tensor) -> Poisson:
+    """
+    Create a Poisson distribution from the given rate.
+
+    Args:
+        rate (torch.Tensor): The rate parameter for the Poisson distribution
+
+    Returns:
+        Poisson: The Poisson distribution
+    """
+    return Poisson(rate + poisson_inflation)
+
+def negative_log_likelihood(inputdict: dict) -> torch.Tensor:
+    """
+    Compute the negative log-likelihood loss.
+
+    Args:
+        inputdict (dict): A dictionary containing the model outputs and targets
+
+    Returns:
+        torch.Tensor: The computed negative log-likelihood loss
+    """
+    assert 'predicted_amplitude' in inputdict
+    assert 'target_amplitude' in inputdict
+    assert 'intensity_scale' in inputdict
+    
+    pred_intensity = (inputdict['predicted_amplitude'] * inputdict['intensity_scale'])**2
+    poisson_dist = poisson_distribution(pred_intensity)
+    log_prob = poisson_dist.log_prob(inputdict['target_amplitude'].to(torch.int64))
+    return -torch.sum(log_prob)
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
@@ -32,8 +66,7 @@ if __name__ == '__main__':
     args = parser.parse_args()
     intensity_scale = 1000.
     N = args.input_size
-    #probe = create_centered_square(N=N)
-    probe = create_centered_circle(N=N)
+    probe_scale = 0.5  # Add this line to define probe_scale
 
     setup_seed(args.seed)
 
@@ -54,7 +87,7 @@ if __name__ == '__main__':
     writer = SummaryWriter(os.path.join('logs', 'pinn', tboard_name))
 
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    probe = probe.to(device)
+    probe = get_default_probe(probe_scale=probe_scale).to(device)
 
     model = MAE_ViT(mask_ratio=args.mask_ratio, intensity_scale=intensity_scale, probe=probe,
                     input_size=args.input_size).to(device)
@@ -71,13 +104,14 @@ if __name__ == '__main__':
         for i, (_, diff_img) in enumerate(tqdm(iter(dataloader)), 1):
             step_count += 1
             diff_img = diff_img.to(device)
-            predicted_img, mask = model(diff_img)
-            loss = torch.mean((predicted_img - diff_img) ** 2 * mask) / args.mask_ratio
-            loss.backward()
+            outputs = model(diff_img)
+            mae_mse_loss = mae_mse(outputs)
+            total_loss = mae_mse_loss
+            total_loss.backward()
             if step_count % steps_per_update == 0:
                 optim.step()
                 optim.zero_grad()
-            losses.append(loss.item())
+            losses.append(total_loss.item())
 
         lr_scheduler.step()
         avg_loss = sum(losses) / len(losses)
@@ -87,50 +121,34 @@ if __name__ == '__main__':
         if e % args.val_interval == 0:
             model.eval()
             with torch.no_grad():
-                in_dist_val_loss = evaluate(model, in_dist_val_dataloader, args.mask_ratio, device)
-                out_dist_val_loss = evaluate(model, out_dist_val_dataloader, args.mask_ratio, device)
+                in_dist_val_loss = evaluate(model, in_dist_val_dataloader, [mae_mse], [1.])
+                out_dist_val_loss = evaluate(model, out_dist_val_dataloader, [mae_mse], [1.])
             writer.add_scalar('Loss/in_dist_validation', in_dist_val_loss, global_step=e)
             writer.add_scalar('Loss/out_dist_validation', out_dist_val_loss, global_step=e)
             print(f'In epoch {e}, in-distribution validation loss is {in_dist_val_loss}, out-of-distribution validation loss is {out_dist_val_loss}.')
 
-            ''' visualize the first 16 predicted images on in-distribution val dataset '''
+            # Visualize the first 16 predicted images on in-distribution val dataset
             with torch.no_grad():
                 val_pre_img, val_diff_img = zip(*[in_dist_val_dataset[i] for i in range(16)])
                 val_pre_img = torch.stack(val_pre_img).to(device)
                 val_diff_img = torch.stack(val_diff_img).to(device)
-                predicted_val_img, mask, intermediate_img = model.forward_with_intermediate(val_diff_img)
-                outputs_dict = {
-                    'predicted_amplitude': predicted_val_img,
-                    'intermediate_img': intermediate_img,
-                    'mask': mask,
-                    'probe': get_default_probe(probe_scale=probe_scale).to(device)
-                }
-                img, ncat = cat_images(val_pre_img,
-                                       # (val_diff_img.sqrt() / outputs['intensity_scale'])
-                                       val_diff_img,
-                                       outputs_dict, args, device)
+                outputs = model(val_diff_img)
+                outputs['probe'] = probe  # Add probe to outputs
+                img, ncat = cat_images(val_pre_img, val_diff_img, outputs, args, device)
                 img = rearrange(img, '(v h1 w1) c h w -> c (h1 h) (w1 v w)', w1=1, v=ncat)
                 writer.add_image('In-dist MAE Image Comparison', img, global_step=e)
 
-            ''' visualize the first 16 predicted images on out-of-distribution val dataset '''
+            # Visualize the first 16 predicted images on out-of-distribution val dataset
             with torch.no_grad():
                 val_pre_img, val_diff_img = zip(*[out_dist_val_dataset[i] for i in range(16)])
                 val_pre_img = torch.stack(val_pre_img).to(device)
                 val_diff_img = torch.stack(val_diff_img).to(device)
-                predicted_val_img, mask, intermediate_img = model.forward_with_intermediate(val_diff_img)
-                outputs_dict = {
-                    'predicted_amplitude': predicted_val_img,
-                    'intermediate_img': intermediate_img,
-                    'mask': mask,
-                    'probe': get_default_probe(probe_scale=probe_scale).to(device)
-                }
-                img, ncat = cat_images(val_pre_img,
-                                       # (val_diff_img.sqrt() / outputs['intensity_scale'])
-                                       val_diff_img,
-                                       outputs_dict, args, device)
+                outputs = model(val_diff_img)
+                outputs['probe'] = probe  # Add probe to outputs
+                img, ncat = cat_images(val_pre_img, val_diff_img, outputs, args, device)
                 img = rearrange(img, '(v h1 w1) c h w -> c (h1 h) (w1 v w)', w1=1, v=ncat)
                 writer.add_image('Out-dist MAE Image Comparison', img, global_step=e)
 
-        model.save_model(args.model_path, probe)
+        model.save_model(args.model_path)
 
     writer.close()

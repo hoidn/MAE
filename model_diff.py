@@ -1,12 +1,10 @@
 import torch
 import numpy as np
-
 from einops import repeat, rearrange
 from einops.layers.torch import Rearrange
-
 from timm.models.layers import trunc_normal_
 from timm.models.vision_transformer import Block
-
+from functools import partial
 from diffsim_torch import diffraction_from_channels
 
 def random_indexes(size: int):
@@ -38,11 +36,11 @@ class PatchShuffle(torch.nn.Module):
 
 class MAE_Encoder(torch.nn.Module):
     def __init__(self,
-                 input_size=64,
-                 emb_dim=192,
-                 num_layer=12,
-                 num_head=3,
-                 mask_ratio=0.75,
+                 input_size: int = 64,
+                 emb_dim: int = 192,
+                 num_layer: int = 12,
+                 num_head: int = 3,
+                 mask_ratio: float = 0.75,
                  ) -> None:
         super().__init__()
 
@@ -63,7 +61,7 @@ class MAE_Encoder(torch.nn.Module):
         trunc_normal_(self.cls_token, std=.02)
         trunc_normal_(self.pos_embedding, std=.02)
 
-    def forward(self, img):
+    def forward(self, img: torch.Tensor):
         patches = self.patchify(img)
         patches = rearrange(patches, 'b c h w -> (h w) b c')
         patches = patches + self.pos_embedding
@@ -79,12 +77,12 @@ class MAE_Encoder(torch.nn.Module):
 
 class MAE_Decoder(torch.nn.Module):
     def __init__(self,
-                 input_size=32,
-                 emb_dim=192,
-                 num_layer=4,
-                 num_head=3,
-                 intensity_scale=1000.,
-                 probe=None
+                 input_size: int = 32,
+                 emb_dim: int = 192,
+                 num_layer: int = 4,
+                 num_head: int = 3,
+                 intensity_scale: float = 1000.,
+                 probe: torch.Tensor = None
                  ) -> None:
         super().__init__()
 
@@ -98,10 +96,9 @@ class MAE_Decoder(torch.nn.Module):
         self.patch2img = Rearrange('(h w) b (c p1 p2) -> b c (h p1) (w p2)', p1=self.patch_size, p2=self.patch_size, h=input_size//self.patch_size)
         self.diffract = partial(diffraction_from_channels, intensity_scale=intensity_scale, draw_poisson=False)
         if probe is None:
-            raise ValueError
+            raise ValueError("Probe cannot be None")
         self.probe = probe
-
-        self.img = None
+        self.intensity_scale = intensity_scale
 
         self.init_weight()
 
@@ -109,7 +106,7 @@ class MAE_Decoder(torch.nn.Module):
         trunc_normal_(self.mask_token, std=.02)
         trunc_normal_(self.pos_embedding, std=.02)
 
-    def forward(self, features, backward_indexes):
+    def forward(self, features: torch.Tensor, backward_indexes: torch.Tensor) -> dict:
         T = features.shape[0]
         backward_indexes = torch.cat([torch.zeros(1, backward_indexes.shape[1]).to(backward_indexes), backward_indexes + 1], dim=0)
         features = torch.cat([features, self.mask_token.expand(backward_indexes.shape[0] - features.shape[0], features.shape[1], -1)], dim=0)
@@ -126,67 +123,65 @@ class MAE_Decoder(torch.nn.Module):
         mask[T-1:] = 1
         mask = take_indexes(mask, backward_indexes[1:] - 1)
         img = self.patch2img(patches)
-        self.img = img  # Store the intermediate img tensor
         mask = self.patch2img(mask)
 
         amplitude = self.diffract(img, self.probe)
-        return amplitude, mask, img
+        
+        return {
+            'predicted_amplitude': amplitude,
+            'mask': mask,
+            'intensity_scale': self.intensity_scale,
+            'intermediate_img': img
+        }
 
-from functools import partial
 class MAE_ViT(torch.nn.Module):
     def __init__(self,
-                 input_size=64,
-                 emb_dim=192,
-                 encoder_layer=12,
-                 encoder_head=3,
-                 decoder_layer=4,
-                 decoder_head=3,
-                 mask_ratio=0.75,
-                 intensity_scale=1000.,
-                 probe=None
+                 input_size: int = 64,
+                 emb_dim: int = 192,
+                 encoder_layer: int = 12,
+                 encoder_head: int = 3,
+                 decoder_layer: int = 4,
+                 decoder_head: int = 3,
+                 mask_ratio: float = 0.75,
+                 intensity_scale: float = 1000.,
+                 probe: torch.Tensor = None
                  ) -> None:
         super().__init__()
 
         self.input_size = input_size
         self.patch_size = input_size // 16
+        self.mask_ratio = mask_ratio
+        self.intensity_scale = intensity_scale
+        self.probe = probe
 
         self.encoder = MAE_Encoder(input_size, emb_dim, encoder_layer, encoder_head, mask_ratio)
         self.decoder = MAE_Decoder(input_size, emb_dim, decoder_layer, decoder_head,
                                    intensity_scale=intensity_scale, probe=probe)
-        self.intensity_scale = intensity_scale
-        self.mask_ratio = mask_ratio
 
-    def forward(self, img):
+    def forward(self, img: torch.Tensor) -> dict:
         features, backward_indexes = self.encoder(img)
-        predicted_img, mask, _ = self.decoder(features, backward_indexes)
-        return predicted_img, mask
+        output = self.decoder(features, backward_indexes)
+        output['target_amplitude'] = img  # Add target amplitude to the output dictionary
+        output['mask_ratio'] = self.mask_ratio
+        return output
 
-    # TODO refactor, merge with forward()
-    def forward_with_intermediate(self, img):
-        features, backward_indexes = self.encoder(img)
-        predicted_img, mask, intermediate_img = self.decoder(features, backward_indexes)
-        return predicted_img, mask, intermediate_img
-
-    def save_model(self, file_path, probe):
+    def save_model(self, file_path: str):
         save_dict = {
             'model_state_dict': self.state_dict(),
-            'probe': probe
+            'probe': self.probe
         }
         torch.save(save_dict, file_path)
 
     @classmethod
-    def load_model(cls, file_path):
+    def load_model(cls, file_path: str):
         checkpoint = torch.load(file_path)
         probe = checkpoint['probe']
-#        train_losses = checkpoint['train_losses']
-#        val_losses = checkpoint['val_losses']
-        model = cls(probe = probe)
+        model = cls(probe=probe)
         model.load_state_dict(checkpoint['model_state_dict'])
-        model.probe = probe # TODO check if this is already set
         return model
 
 class ViT_Classifier(torch.nn.Module):
-    def __init__(self, encoder: MAE_Encoder, num_classes=10) -> None:
+    def __init__(self, encoder: MAE_Encoder, num_classes: int = 10) -> None:
         super().__init__()
         self.cls_token = encoder.cls_token
         self.pos_embedding = encoder.pos_embedding
@@ -195,7 +190,7 @@ class ViT_Classifier(torch.nn.Module):
         self.layer_norm = encoder.layer_norm
         self.head = torch.nn.Linear(self.pos_embedding.shape[-1], num_classes)
 
-    def forward(self, img):
+    def forward(self, img: torch.Tensor) -> torch.Tensor:
         patches = self.patchify(img)
         patches = rearrange(patches, 'b c h w -> (h w) b c')
         patches = patches + self.pos_embedding
@@ -206,7 +201,6 @@ class ViT_Classifier(torch.nn.Module):
         logits = self.head(features[0])
         return logits
 
-
 if __name__ == '__main__':
     shuffle = PatchShuffle(0.75)
     a = torch.rand(16, 2, 10)
@@ -214,11 +208,9 @@ if __name__ == '__main__':
     print(b.shape)
 
     img = torch.rand(2, 3, 32, 32)
-    encoder = MAE_Encoder()
-    decoder = MAE_Decoder()
-    features, backward_indexes = encoder(img)
-    print(forward_indexes.shape)
-    predicted_img, mask, _ = decoder(features, backward_indexes)
-    print(predicted_img.shape)
-    loss = torch.mean((predicted_img - img) ** 2 * mask / 0.75)
+    probe = torch.rand(32, 32)
+    model = MAE_ViT(input_size=32, probe=probe)
+    output = model(img)
+    print(output['predicted_amplitude'].shape)
+    loss = torch.mean((output['predicted_amplitude'] - output['target_amplitude']) ** 2 * output['mask'] / output['mask_ratio'])
     print(loss)
