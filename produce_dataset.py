@@ -9,9 +9,18 @@ import torchvision.utils as vutils
 from diffsim_torch import diffraction_from_channels
 from probe_torch import get_default_probe
 
-probe_scale = 0.55
+intensity_scale = 1000.
 
-def generate_datasets(intensity_scale=1000., probe_scale=probe_scale):
+def save_array(array, save_path, intensity_scale=None):
+    """
+    Save a numpy array and intensity_scale (if provided) to a .npz file.
+    """
+    if intensity_scale is not None:
+        np.savez(save_path, array=array, intensity_scale=intensity_scale)
+    else:
+        np.save(save_path, array)
+
+def generate_datasets(intensity_scale=intensity_scale, probe_scale=0.55):
     """
     Encapsulates the logic for generating training and test datasets.
     
@@ -44,29 +53,32 @@ def generate_datasets(intensity_scale=1000., probe_scale=probe_scale):
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
     probe = get_default_probe(probe_scale=probe_scale)
-    def process_and_save(dataloader, save_dir, writer, phase):
+
+    def process_and_save(dataloader, save_dir, phase):
         for batch_idx, (batch, _) in enumerate(dataloader):
             pre_diffraction_batch = (batch + torch.flip(batch, dims=[2, 3])) / 2
             pre_diffraction_batch[:, 1:3, :, :] -= 0.5
             diffracted_batch = diffraction_from_channels(pre_diffraction_batch, probe, intensity_scale=intensity_scale)
             print(f"Processing {phase} batch {batch_idx + 1}")
-            print(probe.mean())
+            print(f"Probe mean: {probe.mean().item()}")
             for i, (pre_img, diff_img) in enumerate(zip(pre_diffraction_batch, diffracted_batch)):
-                vutils.save_image(pre_img, os.path.join(save_dir, f'{phase}_pre_{batch_idx}_{i}.png'))
-                vutils.save_image(diff_img, os.path.join(save_dir, f'{phase}_diff_{batch_idx}_{i}.png'))
+                pre_save_path = os.path.join(save_dir, f'{phase}_pre_{batch_idx}_{i}.npz')
+                diff_save_path = os.path.join(save_dir, f'{phase}_diff_{batch_idx}_{i}.npz')
+                save_array(pre_img.cpu().numpy(), pre_save_path, intensity_scale)
+                save_array(diff_img.cpu().numpy(), diff_save_path, intensity_scale)
             writer.add_images(f'Pre-diffraction Images/{phase}', pre_diffraction_batch, batch_idx, dataformats='NCHW')
             writer.add_images(f'Diffracted Images/{phase}', diffracted_batch, batch_idx, dataformats='NCHW')
         return pre_diffraction_batch, diffracted_batch
 
     # Process and save train data
-    pre_diffraction_batch, diffracted_batch = process_and_save(train_loader, save_dir_train, writer, 'train')
+    pre_diffraction_batch, diffracted_batch = process_and_save(train_loader, save_dir_train, 'train')
 
     # Process and save test data
-    pre_diffraction_batch, diffracted_batch = process_and_save(test_loader, save_dir_test, writer, 'test')
+    pre_diffraction_batch, diffracted_batch = process_and_save(test_loader, save_dir_test, 'test')
 
     writer.close()
     return probe, pre_diffraction_batch, diffracted_batch
 
 # Execute the generate_datasets function when the script is run directly
 if __name__ == "__main__":
-    pre_diffraction_batch, diffracted_batch = generate_datasets(intensity_scale=1000., probe_scale=probe_scale)
+    probe, pre_diffraction_batch, diffracted_batch = generate_datasets(intensity_scale=intensity_scale, probe_scale=.55)

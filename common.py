@@ -1,9 +1,8 @@
-from torchvision.transforms import ToTensor, Compose, Normalize
 from torch.utils.data import Dataset, DataLoader
-from PIL import Image
 from torch.utils.data import Dataset
 import os
 import torch
+import numpy as np
 
 def to_float(x):
     return x.item() if isinstance(x, torch.Tensor) else float(x)
@@ -41,41 +40,64 @@ def evaluate(model, dataloader, loss_fns, loss_weights=None, device='cuda'):
 class PreDiffractionDataset(Dataset):
     def __init__(self, root_dir, transform=None):
         self.root_dir = root_dir
-        self.transform = transform
-        self.pre_files = [f for f in os.listdir(root_dir) if f.startswith('train_pre_') or f.startswith('test_pre_')]
-        self.diff_files = [f for f in os.listdir(root_dir) if f.startswith('train_diff_')  or f.startswith('test_diff_')]
+        self.pre_files = [f for f in os.listdir(root_dir) if f.startswith('train_pre_') or f.startswith('test_pre_') and f.endswith('.npz')]
+        self.diff_files = [f for f in os.listdir(root_dir) if f.startswith('train_diff_') or f.startswith('test_diff_') and f.endswith('.npz')]
         
         if len(self.pre_files) == 0:
-            raise ValueError(f"No pre-diffraction images found in {root_dir}")
+            raise ValueError(f"No pre-diffraction .npz files found in {root_dir}")
         if len(self.diff_files) == 0:
-            raise ValueError(f"No diffracted images found in {root_dir}")
+            raise ValueError(f"No diffracted .npz files found in {root_dir}")
         if len(self.pre_files) != len(self.diff_files):
-            raise ValueError(f"Mismatch in the number of pre-diffraction and diffracted images in {root_dir}")
+            raise ValueError(f"Mismatch in the number of pre-diffraction and diffracted .npz files in {root_dir}")
         
         print(f"Found {len(self.pre_files)} pre-diffraction and {len(self.diff_files)} diffracted images in {root_dir}")
     
+    def load_array(self, file_path):
+        try:
+            data = np.load(file_path, allow_pickle=True)
+            if 'intensity_scale' in data:
+                array = data['array']
+                intensity_scale = data['intensity_scale'].item()
+            else:
+                array = data
+                intensity_scale = None
+            return torch.from_numpy(array), intensity_scale
+        except Exception as e:
+            print(f"Error loading file {file_path}: {e}")
+            return None, None
+
     def __len__(self):
         return len(self.pre_files)
-    
+
     def __getitem__(self, idx):
-        pre_img_name = os.path.join(self.root_dir, self.pre_files[idx])
-        diff_img_name = os.path.join(self.root_dir, self.diff_files[idx])
-        pre_image = Image.open(pre_img_name).convert("RGB")
-        diff_image = Image.open(diff_img_name).convert("RGB")
-        if self.transform:
-            pre_image = self.transform(pre_image)
-            diff_image = self.transform(diff_image)
+        pre_file_name = os.path.join(self.root_dir, self.pre_files[idx])
+        diff_file_name = os.path.join(self.root_dir, self.diff_files[idx])
+        
+        pre_image, _ = self.load_array(pre_file_name)
+        diff_image, intensity_scale = self.load_array(diff_file_name)
+        
+        if pre_image is None or diff_image is None:
+            # Return a placeholder or skip this item
+            return None
+        
+#        if self.normalize and intensity_scale is not None:
+#            diff_image /= intensity_scale
+#            diff_image = torch.sqrt(diff_image) / intensity_scale
+        
         return pre_image, diff_image
 
 def load_datasets_and_dataloaders(train_dir, in_dist_val_dir, out_dist_val_dir, batch_size=128, num_workers=4):
-    transform = Compose([ToTensor()])
+    train_dataset = PreDiffractionDataset(root_dir=train_dir)
+    in_dist_val_dataset = PreDiffractionDataset(root_dir=in_dist_val_dir)
+    out_dist_val_dataset = PreDiffractionDataset(root_dir=out_dist_val_dir)
 
-    train_dataset = PreDiffractionDataset(root_dir=train_dir, transform=transform)
-    in_dist_val_dataset = PreDiffractionDataset(root_dir=in_dist_val_dir, transform=transform)
-    out_dist_val_dataset = PreDiffractionDataset(root_dir=out_dist_val_dir, transform=transform)
+    # Custom collate function to handle None values
+    def collate_fn(batch):
+        batch = list(filter(lambda x: x is not None, batch))
+        return torch.utils.data.dataloader.default_collate(batch)
 
-    train_dataloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=num_workers)
-    in_dist_val_dataloader = DataLoader(in_dist_val_dataset, batch_size=batch_size, shuffle=False, num_workers=num_workers)
-    out_dist_val_dataloader = DataLoader(out_dist_val_dataset, batch_size=batch_size, shuffle=False, num_workers=num_workers)
+    train_dataloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=num_workers, collate_fn=collate_fn)
+    in_dist_val_dataloader = DataLoader(in_dist_val_dataset, batch_size=batch_size, shuffle=False, num_workers=num_workers, collate_fn=collate_fn)
+    out_dist_val_dataloader = DataLoader(out_dist_val_dataset, batch_size=batch_size, shuffle=False, num_workers=num_workers, collate_fn=collate_fn)
 
     return train_dataset, in_dist_val_dataset, out_dist_val_dataset, train_dataloader, in_dist_val_dataloader, out_dist_val_dataloader
