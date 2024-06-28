@@ -9,7 +9,9 @@ import torchvision.utils as vutils
 from diffsim_torch import diffraction_from_channels
 from probe_torch import get_default_probe
 
-def generate_datasets(intensity_scale=1000., probe_scale=0.55):
+probe_scale = 0.55
+
+def generate_datasets(intensity_scale=1000., probe_scale=probe_scale):
     """
     Encapsulates the logic for generating training and test datasets.
     
@@ -67,4 +69,4 @@ def generate_datasets(intensity_scale=1000., probe_scale=0.55):
 
 # Execute the generate_datasets function when the script is run directly
 if __name__ == "__main__":
-    pre_diffraction_batch, diffracted_batch = generate_datasets(intensity_scale=1000., probe_scale=0.55)
+    pre_diffraction_batch, diffracted_batch = generate_datasets(intensity_scale=1000., probe_scale=probe_scale)

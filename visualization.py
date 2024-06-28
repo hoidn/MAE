@@ -102,20 +102,21 @@ def apply_mask_to_hsv_tensor(hsv_tensor, mask):
     masked_tensor = hsv_tensor * mask
     return masked_tensor
 
-def visualize_realspace(outputs, mask):
+def visualize_realspace(intermediate_img, mask):
     """
     Process the tensor by applying a mask, converting to HSV in RGB format, and extracting amplitude and phase.
+    Amplitude and phase are expanded to match the RGB format in terms of dimensions.
     
     Args:
     outputs (dict): Dictionary containing a tensor under the key 'intermediate_img'.
-    extract_func (callable): Function to extract amplitude and phase from the tensor.
+    mask (torch.Tensor): A mask tensor.
     
     Returns:
-    dict: Contains the amplitude, phase, and RGB representation of the HSV tensor.
+    dict: Contains the RGB-formatted amplitude, phase, and HSV tensor.
     """
+    mask = mask.cpu()
     # Apply mask to the intermediate image tensor
-    intermediate_img = outputs['intermediate_img']
-    smooth_tensor = apply_mask_to_hsv_tensor(intermediate_img.cpu(), mask.cpu())
+    smooth_tensor = apply_mask_to_hsv_tensor(intermediate_img.cpu(), mask)
 
     # Convert to HSV and then to RGB
     rgb_tensor = tensor_to_hsv(smooth_tensor)
@@ -126,20 +127,28 @@ def visualize_realspace(outputs, mask):
     # Extract amplitude and phase for plotting
     amplitude, phase = extract_amplitude_phase(smooth_tensor)
 
+    # Expand amplitude and phase to match the RGB tensor format [N, 3, H, W]
+    amplitude_rgb = amplitude.unsqueeze(1).repeat(1, 3, 1, 1)  # Expanding and repeating the channel dimension
+    phase_rgb = phase.unsqueeze(1).repeat(1, 3, 1, 1)         # Expanding and repeating the channel dimension
+
     return {
-        'amplitude': amplitude,
-        'phase': phase,
+        'amplitude': amplitude_rgb,
+        'phase': phase_rgb,
         'rgb_tensor': rgb_tensor
     }
 
-
 def cat_images(val_pre_img, val_diff_img, outputs, args, device):
     predicted_val_img = outputs['predicted_amplitude'] 
-    to_cat = [val_pre_img,
-                 visualize_realspace(outputs,
-                     create_centered_circle(args.input_size))['rgb_tensor'].to(device),
-                 vscale_tensor((val_diff_img.sqrt() / outputs['intensity_scale'])) * (1 - outputs['mask']),
-                 vscale_tensor(predicted_val_img),
-                 vscale_tensor((val_diff_img.sqrt() / outputs['intensity_scale']))]
+    intermediate_img = outputs['intermediate_img']
+    probe = outputs['probe']
+    imgtype = 'amplitude'
+    render_obj = lambda tensor, illumination: visualize_realspace(tensor,
+                     illumination)[imgtype].to(device)
+    to_cat = [render_obj(val_pre_img, probe),
+                 vscale_tensor(val_diff_img),
+                 vscale_tensor(val_diff_img) * (1 - outputs['mask']),
+                 render_obj(intermediate_img, create_centered_circle(args.input_size)),
+                 vscale_tensor(predicted_val_img)
+              ]
     ncat = len(to_cat)
     return torch.cat(to_cat, dim=0), ncat

@@ -12,6 +12,8 @@ from utils import setup_seed
 from common import evaluate, load_datasets_and_dataloaders
 from visualization import cat_images, vscale_tensor, visualize_realspace
 from probe_torch import create_centered_circle, create_centered_square
+from probe_torch import get_default_probe
+from produce_dataset import probe_scale
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
@@ -99,10 +101,13 @@ if __name__ == '__main__':
                 outputs_dict = {
                     'predicted_amplitude': predicted_val_img,
                     'intermediate_img': intermediate_img,
-                    'intensity_scale': 1,
-                    'mask': mask
+                    'mask': mask,
+                    'probe': get_default_probe(probe_scale=probe_scale).to(device)
                 }
-                img, ncat = cat_images(val_pre_img, val_diff_img, outputs_dict, args, device)
+                img, ncat = cat_images(val_pre_img,
+                                       # (val_diff_img.sqrt() / outputs['intensity_scale'])
+                                       val_diff_img,
+                                       outputs_dict, args, device)
                 img = rearrange(img, '(v h1 w1) c h w -> c (h1 h) (w1 v w)', w1=1, v=ncat)
                 writer.add_image('In-dist MAE Image Comparison', img, global_step=e)
 
@@ -115,10 +120,13 @@ if __name__ == '__main__':
                 outputs_dict = {
                     'predicted_amplitude': predicted_val_img,
                     'intermediate_img': intermediate_img,
-                    'intensity_scale': 1,
-                    'mask': mask
+                    'mask': mask,
+                    'probe': get_default_probe(probe_scale=probe_scale).to(device)
                 }
-                img, ncat = cat_images(val_pre_img, val_diff_img, outputs_dict, args, device)
+                img, ncat = cat_images(val_pre_img,
+                                       # (val_diff_img.sqrt() / outputs['intensity_scale'])
+                                       val_diff_img,
+                                       outputs_dict, args, device)
                 img = rearrange(img, '(v h1 w1) c h w -> c (h1 h) (w1 v w)', w1=1, v=ncat)
                 writer.add_image('Out-dist MAE Image Comparison', img, global_step=e)
 
