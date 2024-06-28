@@ -1,5 +1,4 @@
 from torch.utils.data import Dataset, DataLoader
-from torch.utils.data import Dataset
 import os
 import torch
 import numpy as np
@@ -19,7 +18,7 @@ def evaluate(model, dataloader, loss_fns, loss_weights=None, device='cuda'):
     num_batches = 0
     
     with torch.no_grad():
-        for (_, img) in dataloader:
+        for (_, img, _) in dataloader:
             img = img.to(device)
             output = model(img)
             
@@ -55,16 +54,13 @@ class PreDiffractionDataset(Dataset):
     def load_array(self, file_path):
         try:
             data = np.load(file_path, allow_pickle=True)
-            if 'intensity_scale' in data:
-                array = data['array']
-                intensity_scale = data['intensity_scale'].item()
-            else:
-                array = data
-                intensity_scale = None
-            return torch.from_numpy(array), intensity_scale
+            array = data['array']
+            intensity_scale = data['intensity_scale'].item() if 'intensity_scale' in data else None
+            probe = data['probe'] if 'probe' in data else None
+            return torch.from_numpy(array), intensity_scale, probe
         except Exception as e:
             print(f"Error loading file {file_path}: {e}")
-            return None, None
+            return None, None, None
 
     def __len__(self):
         return len(self.pre_files)
@@ -73,31 +69,69 @@ class PreDiffractionDataset(Dataset):
         pre_file_name = os.path.join(self.root_dir, self.pre_files[idx])
         diff_file_name = os.path.join(self.root_dir, self.diff_files[idx])
         
-        pre_image, _ = self.load_array(pre_file_name)
-        diff_image, intensity_scale = self.load_array(diff_file_name)
+        pre_image, _, _ = self.load_array(pre_file_name)
+        diff_image, intensity_scale, probe = self.load_array(diff_file_name)
         
         if pre_image is None or diff_image is None:
-            # Return a placeholder or skip this item
             return None
         
-#        if self.normalize and intensity_scale is not None:
-#            diff_image /= intensity_scale
-#            diff_image = torch.sqrt(diff_image) / intensity_scale
+        if probe is not None:
+            probe = torch.from_numpy(probe).float()
         
-        return pre_image, diff_image
+        return pre_image, diff_image, intensity_scale, probe
 
-def load_datasets_and_dataloaders(train_dir, in_dist_val_dir, out_dist_val_dir, batch_size=128, num_workers=4):
+def load_datasets_and_dataloaders(train_dir, in_dist_val_dir, out_dist_val_dir, batch_size=128, num_workers=4, use_probe=False):
+    """
+    Load datasets and create dataloaders for training and validation.
+
+    Args:
+        train_dir (str): Directory containing training data
+        in_dist_val_dir (str): Directory containing in-distribution validation data
+        out_dist_val_dir (str): Directory containing out-of-distribution validation data
+        batch_size (int): Batch size for dataloaders
+        num_workers (int): Number of worker processes for data loading
+        use_probe (bool): Whether to use probe data from the dataset
+
+    Returns:
+        dict: A dictionary containing the following key-value pairs:
+            - 'train_dataset': PreDiffractionDataset for training data
+            - 'in_dist_val_dataset': PreDiffractionDataset for in-distribution validation data
+            - 'out_dist_val_dataset': PreDiffractionDataset for out-of-distribution validation data
+            - 'train_dataloader': DataLoader for training data
+            - 'in_dist_val_dataloader': DataLoader for in-distribution validation data
+            - 'out_dist_val_dataloader': DataLoader for out-of-distribution validation data
+            - 'probe': Probe data if use_probe is True and probe data is available, else None
+    """
     train_dataset = PreDiffractionDataset(root_dir=train_dir)
     in_dist_val_dataset = PreDiffractionDataset(root_dir=in_dist_val_dir)
     out_dist_val_dataset = PreDiffractionDataset(root_dir=out_dist_val_dir)
 
-    # Custom collate function to handle None values
+    if use_probe:
+        first_data_point = train_dataset[1]
+        probe = first_data_point[-1] if first_data_point is not None else None
+    else:
+        probe = None
+
     def collate_fn(batch):
         batch = list(filter(lambda x: x is not None, batch))
-        return torch.utils.data.dataloader.default_collate(batch)
+        if len(batch) == 0:
+            return None
+        pre_images, diff_images, intensity_scales, _ = zip(*batch)
+        pre_images = torch.stack(pre_images)
+        diff_images = torch.stack(diff_images)
+        intensity_scales = torch.tensor(intensity_scales)
+        return pre_images, diff_images, intensity_scales
 
     train_dataloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=num_workers, collate_fn=collate_fn)
     in_dist_val_dataloader = DataLoader(in_dist_val_dataset, batch_size=batch_size, shuffle=False, num_workers=num_workers, collate_fn=collate_fn)
     out_dist_val_dataloader = DataLoader(out_dist_val_dataset, batch_size=batch_size, shuffle=False, num_workers=num_workers, collate_fn=collate_fn)
 
-    return train_dataset, in_dist_val_dataset, out_dist_val_dataset, train_dataloader, in_dist_val_dataloader, out_dist_val_dataloader
+    return {
+        'train_dataset': train_dataset,
+        'in_dist_val_dataset': in_dist_val_dataset,
+        'out_dist_val_dataset': out_dist_val_dataset,
+        'train_dataloader': train_dataloader,
+        'in_dist_val_dataloader': in_dist_val_dataloader,
+        'out_dist_val_dataloader': out_dist_val_dataloader,
+        'probe': probe
+    }

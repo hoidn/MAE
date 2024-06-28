@@ -126,13 +126,13 @@ def illuminate_and_diffract(Y_complex, probe, intensity_scale=None,
                             draw_poisson = True):
     if intensity_scale is None:
         intensity_scale = scale_nphotons(torch.abs(Y_complex) * probe).item()
-    obj = intensity_scale * Y_complex
-    obj = obj * probe.to(obj.dtype)
+    obj_x_probe = Y_complex * probe.to(Y_complex.dtype)
+    obj = intensity_scale * obj_x_probe
 
     X = diffract_obj(obj, draw_poisson = draw_poisson)
     X = X / intensity_scale
 
-    return X
+    return obj_x_probe, X
 
 def map_to_pi(tensor: torch.Tensor) -> torch.Tensor:
     """
@@ -174,11 +174,11 @@ def map_to_unit_interval(tensor: torch.Tensor) -> torch.Tensor:
     return sigmoid_tensor
 
 def diffraction_from_channels(batch, probe, intensity_scale = 1000.,
-                              draw_poisson = True):
+                              draw_poisson = True, bias = 0.):
     dprint(f"Input batch shape: {batch.shape}, Data type: {batch.dtype}")
 
     # -1 bias helps center activations when the amplitude ranges between 0 and 1
-    Y_I = torch.nn.functional.softplus(batch[:, 0] - 1)
+    Y_I = torch.nn.functional.softplus(batch[:, 0] - bias)
     Y_phi_input = (batch[:, 1] + batch[:, 2]) / 2
     Y_phi = Y_phi_input #* allow phase wrapping instead of squashing with tanh
 
@@ -193,7 +193,7 @@ def diffraction_from_channels(batch, probe, intensity_scale = 1000.,
     dprint(f"Probe shape: {probe.shape}, Data type: {probe.dtype}")
     
     # Apply the illuminate_and_diffract() function
-    X = illuminate_and_diffract(Y_complex, probe, intensity_scale= intensity_scale,
+    Y_complex_illuminated, X = illuminate_and_diffract(Y_complex, probe, intensity_scale= intensity_scale,
                                 draw_poisson=draw_poisson)
     
     dprint(f"Diffracted X shape: {X.shape}, Data type: {X.dtype}")
@@ -203,4 +203,9 @@ def diffraction_from_channels(batch, probe, intensity_scale = 1000.,
     
     dprint(f"Diffracted batch shape: {diffracted_batch.shape}, Data type: {diffracted_batch.dtype}")
     
-    return diffracted_batch # diffracted amplitude
+    return Y_complex_illuminated, diffracted_batch # diffracted amplitude
+
+def complex_to_channels(complex_data):
+    amplitude = torch.abs(complex_data)
+    phase = torch.angle(complex_data)
+    return torch.stack([amplitude, phase, phase], dim=1)

@@ -94,7 +94,7 @@ class MAE_Decoder(torch.nn.Module):
 
         self.head = torch.nn.Linear(emb_dim, 3 * self.patch_size ** 2)
         self.patch2img = Rearrange('(h w) b (c p1 p2) -> b c (h p1) (w p2)', p1=self.patch_size, p2=self.patch_size, h=input_size//self.patch_size)
-        self.diffract = partial(diffraction_from_channels, intensity_scale=intensity_scale, draw_poisson=False)
+        self.diffract = partial(diffraction_from_channels, intensity_scale=intensity_scale, draw_poisson=False, bias = 1.)
         if probe is None:
             raise ValueError("Probe cannot be None")
         self.probe = probe
@@ -125,13 +125,14 @@ class MAE_Decoder(torch.nn.Module):
         img = self.patch2img(patches)
         mask = self.patch2img(mask)
 
-        amplitude = self.diffract(img, self.probe)
+        Y_complex, amplitude = self.diffract(img, self.probe)
         
         return {
             'predicted_amplitude': amplitude,
             'mask': mask,
             'intensity_scale': self.intensity_scale,
-            'intermediate_img': img
+            'intermediate_img': img,
+            'predicted_Y_complex': Y_complex
         }
 
 class MAE_ViT(torch.nn.Module):

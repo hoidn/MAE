@@ -1,6 +1,7 @@
 import torch
 import torch.nn.functional as F
 from probe_torch import create_centered_circle
+from diffsim_torch import complex_to_channels
 
 def vscale_tensor(tensor: torch.Tensor) -> torch.Tensor:
     """
@@ -141,14 +142,14 @@ def visualize_realspace(intermediate_img, mask):
 
 def cat_images(val_pre_img, val_diff_img, outputs, args, device):
     predicted_val_img = outputs['predicted_amplitude'] 
-    intermediate_img = outputs['intermediate_img']
+    illuminated_Y_chan = complex_to_channels(outputs['predicted_Y_complex'])
     probe = outputs['probe']
     render_obj = lambda tensor, illumination, imgtype: visualize_realspace(tensor,
                      illumination)[imgtype].to(device)
     to_cat = [render_obj(val_pre_img, probe, 'rgb_tensor'),
                  vscale_tensor(val_diff_img),
                  vscale_tensor(val_diff_img) * (1 - outputs['mask']),
-                 render_obj(intermediate_img, create_centered_circle(args.input_size), 'amplitude'),
+                 render_obj(illuminated_Y_chan, create_centered_circle(args.input_size), 'rgb_tensor'),
                  vscale_tensor(predicted_val_img)
               ]
     ncat = len(to_cat)
