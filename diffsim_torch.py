@@ -1,4 +1,5 @@
-from typing import Tuple, Optional, Union, Callable, Any
+import torch.nn.functional as F
+from typing import Tuple
 import torch
 import torch.nn as nn
 import torch.fft
@@ -173,37 +174,72 @@ def map_to_unit_interval(tensor: torch.Tensor) -> torch.Tensor:
     sigmoid_tensor = torch.sigmoid(tensor)
     return sigmoid_tensor
 
-def diffraction_from_channels(batch, probe, intensity_scale = 1000.,
-                              draw_poisson = True, bias = 0.):
+def symmetric_zero_pad(tensor: torch.Tensor) -> torch.Tensor:
+    """
+    Symmetrically zero-pads a 4D tensor from [N, C, size, size] to [N, C, 2*size, 2*size]
+    
+    Args:
+    - tensor (torch.Tensor): Input tensor of shape [N, C, size, size].
+    
+    Returns:
+    - torch.Tensor: Output tensor of shape [N, C, 2*size, 2*size] after padding.
+    """
+    size = tensor.shape[-1]
+    padding_size = size // 2  # Halving the padding size
+
+    # Pad symmetrically on both sides of the last two dimensions
+    padded_tensor = F.pad(tensor, (padding_size, padding_size, padding_size, padding_size), mode='constant', value=0)
+    
+    return padded_tensor
+
+def diffraction_from_channels(batch, probe, intensity_scale=1000., draw_poisson=True, bias=0., pad_before_diffraction=False):
+    """
+    Simulates the diffraction pattern from channels, with an option to pad Y_complex tensor before diffraction.
+    
+    Args:
+    - batch (torch.Tensor): The input batch tensor.
+    - probe (torch.Tensor): The probe tensor.
+    - intensity_scale (float): Scaling factor for the intensity.
+    - draw_poisson (bool): Flag to simulate Poisson noise.
+    - bias (float): Bias to adjust the phase.
+    - pad_before_diffraction (bool): Whether to apply symmetric zero-padding to Y_complex.
+
+    Returns:
+    - Tuple[torch.Tensor, torch.Tensor]: The illuminated complex tensor and the diffracted batch tensor.
+    """
     dprint(f"Input batch shape: {batch.shape}, Data type: {batch.dtype}")
 
-    # -1 bias helps center activations when the amplitude ranges between 0 and 1
+    # Processing intensity and phase channels
     Y_I = torch.nn.functional.softplus(batch[:, 0] - bias)
     Y_phi_input = (batch[:, 1] + batch[:, 2]) / 2
-    Y_phi = Y_phi_input #* allow phase wrapping instead of squashing with tanh
+    Y_phi = Y_phi_input  # Phase component
 
     dprint(f"Y_I shape: {Y_I.shape}, Data type: {Y_I.dtype}")
     dprint(f"Y_phi shape: {Y_phi.shape}, Data type: {Y_phi.dtype}")
-    
-#    # Create a complex tensor by combining Y_I and Y_phi
+
+    # Combining amplitude and phase to form a complex tensor
     Y_complex = combine_amp_phase(Y_I, Y_phi)
-    
+
     dprint(f"Y_complex shape: {Y_complex.shape}, Data type: {Y_complex.dtype}")
+
+    # Optional symmetric zero-padding
+    if pad_before_diffraction:
+        Y_complex = symmetric_zero_pad(Y_complex)
+        dprint(f"Padded Y_complex shape: {Y_complex.shape}")
 
     dprint(f"Probe shape: {probe.shape}, Data type: {probe.dtype}")
     
-    # Apply the illuminate_and_diffract() function
-    Y_complex_illuminated, X = illuminate_and_diffract(Y_complex, probe, intensity_scale= intensity_scale,
-                                draw_poisson=draw_poisson)
+    # Illumination and diffraction simulation
+    Y_complex_illuminated, X = illuminate_and_diffract(Y_complex, probe, intensity_scale=intensity_scale, draw_poisson=draw_poisson)
     
     dprint(f"Diffracted X shape: {X.shape}, Data type: {X.dtype}")
     
-    # Reshape the output to match the expected shape (N, C, H, W)
+    # Reshaping output to match the expected format (N, C, H, W)
     diffracted_batch = X.view(-1, 1, X.shape[1], X.shape[2]).repeat(1, 3, 1, 1)
     
     dprint(f"Diffracted batch shape: {diffracted_batch.shape}, Data type: {diffracted_batch.dtype}")
     
-    return Y_complex_illuminated, diffracted_batch # diffracted amplitude
+    return Y_complex_illuminated, diffracted_batch
 
 def complex_to_channels(complex_data):
     amplitude = torch.abs(complex_data)

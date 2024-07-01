@@ -16,6 +16,23 @@ def random_indexes(size: int):
 def take_indexes(sequences, indexes):
     return torch.gather(sequences, 0, repeat(indexes, 't b -> t b c', c=sequences.shape[-1]))
 
+def upsample_tensor(input_tensor):
+    """
+    Upsamples a tensor by repeating values four times in the last two dimensions.
+    
+    Args:
+    - input_tensor (torch.Tensor): Input tensor of shape [N, C, size, size]
+    
+    Returns:
+    - torch.Tensor: Upsampled tensor of shape [N, C, 2*size, 2*size]
+    """
+    N, C, size, _ = input_tensor.size()
+    
+    # Repeat values in the last two dimensions
+    upsampled_tensor = input_tensor.repeat_interleave(2, dim=2).repeat_interleave(2, dim=3)
+    
+    return upsampled_tensor
+
 class PatchShuffle(torch.nn.Module):
     def __init__(self, ratio) -> None:
         super().__init__()
@@ -94,7 +111,7 @@ class MAE_Decoder(torch.nn.Module):
 
         self.head = torch.nn.Linear(emb_dim, 3 * self.patch_size ** 2)
         self.patch2img = Rearrange('(h w) b (c p1 p2) -> b c (h p1) (w p2)', p1=self.patch_size, p2=self.patch_size, h=input_size//self.patch_size)
-        self.diffract = partial(diffraction_from_channels, intensity_scale=intensity_scale, draw_poisson=False, bias = 1.)
+        self.diffract = partial(diffraction_from_channels, intensity_scale=intensity_scale, draw_poisson=False, bias = 1., pad_before_diffraction = False)
         if probe is None:
             raise ValueError("Probe cannot be None")
         self.probe = probe
@@ -130,6 +147,7 @@ class MAE_Decoder(torch.nn.Module):
         return {
             'predicted_amplitude': amplitude,
             'mask': mask,
+            #'mask': upsample_tensor(mask),
             'intensity_scale': self.intensity_scale,
             'intermediate_img': img,
             'predicted_Y_complex': Y_complex
@@ -140,8 +158,8 @@ class MAE_ViT(torch.nn.Module):
                  input_size: int = 64,
                  emb_dim: int = 192,
                  encoder_layer: int = 12,
-                 encoder_head: int = 3,
-                 decoder_layer: int = 4,
+                 encoder_head: int = 4,
+                 decoder_layer: int = 3,
                  decoder_head: int = 3,
                  mask_ratio: float = 0.75,
                  intensity_scale: float = 1000.,
@@ -156,6 +174,7 @@ class MAE_ViT(torch.nn.Module):
         self.probe = probe
 
         self.encoder = MAE_Encoder(input_size, emb_dim, encoder_layer, encoder_head, mask_ratio)
+        #self.decoder = MAE_Decoder(input_size // 2, emb_dim, decoder_layer, decoder_head,
         self.decoder = MAE_Decoder(input_size, emb_dim, decoder_layer, decoder_head,
                                    intensity_scale=intensity_scale, probe=probe)
 

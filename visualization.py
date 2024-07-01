@@ -14,7 +14,7 @@ def vscale_tensor(tensor: torch.Tensor) -> torch.Tensor:
     tensor = (tensor - tensor_min) / (tensor_max - tensor_min)
     return tensor
 
-def extract_amplitude_phase(tensor):
+def extract_amplitude_phase(tensor, softplus = False):
     """
     Extract amplitude and phase from a tensor of shape [N, C, H, W] (C = 3).
     tensor[:, 0, :, :] encodes amplitude via softplus.
@@ -23,8 +23,11 @@ def extract_amplitude_phase(tensor):
     """
     assert tensor.shape[1] == 3, "Channel dimension should be 3."
     
-    # Calculate amplitude using softplus
-    amplitude = F.softplus(tensor[:, 0, :, :])
+    if softplus:
+        # Calculate amplitude using softplus
+        amplitude = F.softplus(tensor[:, 0, :, :])
+    else:
+        amplitude = tensor[:, 0, :, :]
     
     # Calculate phase by taking the mean of the second and third channels
     phase = tensor[:, 1:3, :, :].mean(dim=1)
@@ -103,7 +106,7 @@ def apply_mask_to_hsv_tensor(hsv_tensor, mask):
     masked_tensor = hsv_tensor * mask
     return masked_tensor
 
-def visualize_realspace(intermediate_img, mask):
+def visualize_realspace(intermediate_img, mask, softplus = True):
     """
     Process the tensor by applying a mask, converting to HSV in RGB format, and extracting amplitude and phase.
     Amplitude and phase are expanded to match the RGB format in terms of dimensions.
@@ -126,13 +129,15 @@ def visualize_realspace(intermediate_img, mask):
     rgb_tensor = apply_mask_to_hsv_tensor(rgb_tensor, mask)
 
     # Extract amplitude and phase for plotting
-    amplitude, phase = extract_amplitude_phase(smooth_tensor)
+    amplitude, phase = extract_amplitude_phase(smooth_tensor, softplus = softplus)
 
     # Expand amplitude and phase to match the RGB tensor format [N, 3, H, W]
     amplitude_rgb = amplitude.unsqueeze(1).repeat(1, 3, 1, 1)  # Expanding and repeating the channel dimension
     phase_rgb = phase.unsqueeze(1).repeat(1, 3, 1, 1)         # Expanding and repeating the channel dimension
 
     amplitude_rgb = apply_mask_to_hsv_tensor(amplitude_rgb, mask)
+    print('max amplitude:', amplitude_rgb.max())
+    amplitude_rgb = amplitude_rgb / amplitude_rgb.max()
     phase_rgb = apply_mask_to_hsv_tensor(phase_rgb, mask)
     return {
         'amplitude': amplitude_rgb,
@@ -144,12 +149,12 @@ def cat_images(val_pre_img, val_diff_img, outputs, args, device):
     predicted_val_img = outputs['predicted_amplitude'] 
     illuminated_Y_chan = complex_to_channels(outputs['predicted_Y_complex'])
     probe = outputs['probe']
-    render_obj = lambda tensor, illumination, imgtype: visualize_realspace(tensor,
-                     illumination)[imgtype].to(device)
-    to_cat = [render_obj(val_pre_img, probe, 'rgb_tensor'),
+    render_obj = lambda tensor, illumination, imgtype, softplus: visualize_realspace(tensor,
+                     illumination, softplus = softplus)[imgtype].to(device)
+    to_cat = [render_obj(val_pre_img, probe, 'rgb_tensor', True),
                  vscale_tensor(val_diff_img),
                  vscale_tensor(val_diff_img) * (1 - outputs['mask']),
-                 render_obj(illuminated_Y_chan, create_centered_circle(args.input_size), 'rgb_tensor'),
+                 render_obj(illuminated_Y_chan, create_centered_circle(args.input_size), 'amplitude', False),
                  vscale_tensor(predicted_val_img)
               ]
     ncat = len(to_cat)
