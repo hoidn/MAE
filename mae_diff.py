@@ -46,7 +46,7 @@ def validate_and_visualize(model: MAE_ViT,
     """Validate the model and visualize results."""
     model.eval()
     with torch.no_grad():
-        val_loss = evaluate(model, val_dataloader, [mae_mse], [1.])
+        val_loss = evaluate(model, val_dataloader, [mae_mae], [1.])
     writer.add_scalar(f'Loss/{prefix}_validation', val_loss, global_step=epoch)
     print(f'In epoch {epoch}, {prefix} validation loss is {val_loss}.')
 
@@ -57,7 +57,7 @@ def validate_and_visualize(model: MAE_ViT,
             print(f"Warning: {prefix} validation dataset is empty.")
             return val_loss
         
-        val_pre_img, val_diff_img, _, val_probe = zip(*val_data)
+        val_pre_img, val_diff_img, _, val_probe, _ = zip(*val_data)
         # TODO: in the future, the model's forward method should take val_probe
         # as an explicit argument. This will allow associating a different illumination
         # with each sample. We will have to add a 'global_probe' parameter for backwards
@@ -154,6 +154,8 @@ def main(args: argparse.Namespace) -> None:
             outputs = model(diff_img)
             mae_mse_loss = mae_mse(outputs)
             total_loss = mae_mse_loss
+#            mae_mae_loss = mae_mae(outputs)
+#            total_loss = mae_mae_loss
             total_loss.backward()
             if step_count % steps_per_update == 0:
                 optim.step()

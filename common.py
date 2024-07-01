@@ -2,11 +2,12 @@ from torch.utils.data import Dataset, DataLoader
 import os
 import torch
 import numpy as np
+from typing import Optional, Tuple, List, Union
 
-def to_float(x):
+def to_float(x: Union[torch.Tensor, float]) -> float:
     return x.item() if isinstance(x, torch.Tensor) else float(x)
 
-def evaluate(model, dataloader, loss_fns, loss_weights=None, device='cuda'):
+def evaluate(model: torch.nn.Module, dataloader: DataLoader, loss_fns: List[callable], loss_weights: Optional[List[float]] = None, device: str = 'cuda') -> float:
     model.eval()
     if loss_weights is None:
         loss_weights = [1.0] * len(loss_fns)
@@ -37,50 +38,42 @@ def evaluate(model, dataloader, loss_fns, loss_weights=None, device='cuda'):
     return avg_combined_loss
 
 class PreDiffractionDataset(Dataset):
-    def __init__(self, root_dir, transform=None):
+    def __init__(self, root_dir: str, transform: Optional[callable] = None):
         self.root_dir = root_dir
-        self.pre_files = [f for f in os.listdir(root_dir) if f.startswith('train_pre_') or f.startswith('test_pre_') and f.endswith('.npz')]
-        self.diff_files = [f for f in os.listdir(root_dir) if f.startswith('train_diff_') or f.startswith('test_diff_') and f.endswith('.npz')]
+        self.data_files = [f for f in os.listdir(root_dir) if f.endswith('.npz')]
         
-        if len(self.pre_files) == 0:
-            raise ValueError(f"No pre-diffraction .npz files found in {root_dir}")
-        if len(self.diff_files) == 0:
-            raise ValueError(f"No diffracted .npz files found in {root_dir}")
-        if len(self.pre_files) != len(self.diff_files):
-            raise ValueError(f"Mismatch in the number of pre-diffraction and diffracted .npz files in {root_dir}")
+        if len(self.data_files) == 0:
+            raise ValueError(f"No .npz files found in {root_dir}")
         
-        print(f"Found {len(self.pre_files)} pre-diffraction and {len(self.diff_files)} diffracted images in {root_dir}")
+        print(f"Found {len(self.data_files)} data files in {root_dir}")
     
-    def load_array(self, file_path):
+    def load_array(self, file_path: str) -> Tuple[Optional[torch.Tensor], Optional[torch.Tensor], Optional[float], Optional[torch.Tensor], Optional[np.ndarray]]:
         try:
             data = np.load(file_path, allow_pickle=True)
-            array = data['array']
-            intensity_scale = data['intensity_scale'].item() if 'intensity_scale' in data else None
-            probe = data['probe'] if 'probe' in data else None
-            return torch.from_numpy(array), intensity_scale, probe
+            pre_array = data['pre_array']
+            diff_array = data['diff_array']
+            intensity_scale = data['intensity_scale'].item()
+            probe = data['probe']
+            coords = data['coords'] if 'coords' in data else None
+            return torch.from_numpy(pre_array), torch.from_numpy(diff_array), intensity_scale, torch.from_numpy(probe), coords
         except Exception as e:
             print(f"Error loading file {file_path}: {e}")
-            return None, None, None
+            return None, None, None, None, None
 
-    def __len__(self):
-        return len(self.pre_files)
+    def __len__(self) -> int:
+        return len(self.data_files)
 
-    def __getitem__(self, idx):
-        pre_file_name = os.path.join(self.root_dir, self.pre_files[idx])
-        diff_file_name = os.path.join(self.root_dir, self.diff_files[idx])
+    def __getitem__(self, idx: int) -> Optional[Tuple[torch.Tensor, torch.Tensor, float, torch.Tensor, Optional[np.ndarray]]]:
+        file_name = os.path.join(self.root_dir, self.data_files[idx])
         
-        pre_image, _, _ = self.load_array(pre_file_name)
-        diff_image, intensity_scale, probe = self.load_array(diff_file_name)
+        pre_image, diff_image, intensity_scale, probe, coords = self.load_array(file_name)
         
         if pre_image is None or diff_image is None:
             return None
         
-        if probe is not None:
-            probe = torch.from_numpy(probe).float()
-        
-        return pre_image, diff_image, intensity_scale, probe
+        return pre_image, diff_image, intensity_scale, probe, coords
 
-def load_datasets_and_dataloaders(train_dir, in_dist_val_dir, out_dist_val_dir, batch_size=128, num_workers=4, use_probe=False):
+def load_datasets_and_dataloaders(train_dir: str, in_dist_val_dir: str, out_dist_val_dir: str, batch_size: int = 128, num_workers: int = 4, use_probe: bool = False) -> dict:
     """
     Load datasets and create dataloaders for training and validation.
 
@@ -108,18 +101,22 @@ def load_datasets_and_dataloaders(train_dir, in_dist_val_dir, out_dist_val_dir, 
 
     if use_probe:
         first_data_point = train_dataset[1]
-        probe = first_data_point[-1] if first_data_point is not None else None
+        probe = first_data_point[3] if first_data_point is not None else None
     else:
         probe = None
 
-    def collate_fn(batch):
+    def collate_fn(batch: List[Optional[Tuple[torch.Tensor, torch.Tensor, float, torch.Tensor, Optional[np.ndarray]]]]) -> Optional[Tuple[torch.Tensor, torch.Tensor, torch.Tensor, Optional[torch.Tensor], Optional[List[Optional[np.ndarray]]]]]:
         batch = list(filter(lambda x: x is not None, batch))
         if len(batch) == 0:
             return None
-        pre_images, diff_images, intensity_scales, _ = zip(*batch)
+        pre_images, diff_images, intensity_scales, probes, coords = zip(*batch)
         pre_images = torch.stack(pre_images)
         diff_images = torch.stack(diff_images)
         intensity_scales = torch.tensor(intensity_scales)
+        if use_probe:
+            probes = torch.stack(probes)
+        else:
+            probes = None
         return pre_images, diff_images, intensity_scales
 
     train_dataloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=num_workers, collate_fn=collate_fn)
