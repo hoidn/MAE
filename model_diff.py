@@ -6,6 +6,7 @@ from timm.models.layers import trunc_normal_
 from timm.models.vision_transformer import Block
 from functools import partial
 from diffsim_torch import diffraction_from_channels
+from torch.cuda.amp import autocast
 
 def random_indexes(size: int):
     forward_indexes = np.arange(size)
@@ -17,20 +18,8 @@ def take_indexes(sequences, indexes):
     return torch.gather(sequences, 0, repeat(indexes, 't b -> t b c', c=sequences.shape[-1]))
 
 def upsample_tensor(input_tensor):
-    """
-    Upsamples a tensor by repeating values four times in the last two dimensions.
-    
-    Args:
-    - input_tensor (torch.Tensor): Input tensor of shape [N, C, size, size]
-    
-    Returns:
-    - torch.Tensor: Upsampled tensor of shape [N, C, 2*size, 2*size]
-    """
     N, C, size, _ = input_tensor.size()
-    
-    # Repeat values in the last two dimensions
     upsampled_tensor = input_tensor.repeat_interleave(2, dim=2).repeat_interleave(2, dim=3)
-    
     return upsampled_tensor
 
 class PatchShuffle(torch.nn.Module):
@@ -111,7 +100,7 @@ class MAE_Decoder(torch.nn.Module):
 
         self.head = torch.nn.Linear(emb_dim, 3 * self.patch_size ** 2)
         self.patch2img = Rearrange('(h w) b (c p1 p2) -> b c (h p1) (w p2)', p1=self.patch_size, p2=self.patch_size, h=input_size//self.patch_size)
-        self.diffract = partial(diffraction_from_channels, intensity_scale=intensity_scale, draw_poisson=False, bias = 0., pad_before_diffraction = False)
+        self.diffract = partial(diffraction_from_channels, intensity_scale=intensity_scale, draw_poisson=False, bias=0., pad_before_diffraction=False)
         if probe is None:
             raise ValueError("Probe cannot be None")
         self.probe = probe
@@ -142,12 +131,12 @@ class MAE_Decoder(torch.nn.Module):
         img = self.patch2img(patches)
         mask = self.patch2img(mask)
 
-        Y_complex, amplitude = self.diffract(img, self.probe)
+        with autocast(enabled=False):
+            Y_complex, amplitude = self.diffract(img.float(), self.probe.float())
         
         return {
             'predicted_amplitude': amplitude,
             'mask': mask,
-            #'mask': upsample_tensor(mask),
             'intensity_scale': self.intensity_scale,
             'intermediate_img': img,
             'predicted_Y_complex': Y_complex
@@ -174,22 +163,23 @@ class MAE_ViT(torch.nn.Module):
         self.probe = probe
 
         self.encoder = MAE_Encoder(input_size, emb_dim, encoder_layer, encoder_head, mask_ratio)
-        #self.decoder = MAE_Decoder(input_size // 2, emb_dim, decoder_layer, decoder_head,
         self.decoder = MAE_Decoder(input_size, emb_dim, decoder_layer, decoder_head,
                                    intensity_scale=intensity_scale, probe=probe)
 
     def forward(self, img: torch.Tensor) -> dict:
         features, backward_indexes = self.encoder(img)
         output = self.decoder(features, backward_indexes)
-        output['target_amplitude'] = img  # Add target amplitude to the output dictionary
+        output['target_amplitude'] = img
         output['mask_ratio'] = self.mask_ratio
         return output
 
-    def save_model(self, file_path: str):
+    def save_model(self, file_path: str, scaler=None):
         save_dict = {
             'model_state_dict': self.state_dict(),
             'probe': self.probe
         }
+        if scaler is not None:
+            save_dict['scaler'] = scaler.state_dict()
         torch.save(save_dict, file_path)
 
     @classmethod
@@ -198,7 +188,12 @@ class MAE_ViT(torch.nn.Module):
         probe = checkpoint['probe']
         model = cls(probe=probe)
         model.load_state_dict(checkpoint['model_state_dict'])
-        return model
+        scaler = None
+        if 'scaler' in checkpoint:
+            from torch.cuda.amp import GradScaler
+            scaler = GradScaler()
+            scaler.load_state_dict(checkpoint['scaler'])
+        return model, scaler
 
 class ViT_Classifier(torch.nn.Module):
     def __init__(self, encoder: MAE_Encoder, num_classes: int = 10) -> None:

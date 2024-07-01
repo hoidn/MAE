@@ -4,6 +4,7 @@ import math
 from typing import Dict, Any, List, Tuple, Optional
 
 import torch
+from torch.cuda.amp import autocast, GradScaler
 from torch.utils.tensorboard.writer import SummaryWriter
 from torch.utils.data import Dataset, DataLoader
 from tqdm import tqdm
@@ -45,13 +46,13 @@ def validate_and_visualize(model: MAE_ViT,
                            probe: torch.Tensor) -> float:
     """Validate the model and visualize results."""
     model.eval()
-    with torch.no_grad():
+    with torch.no_grad(), autocast():
         val_loss = evaluate(model, val_dataloader, [mae_mae], [1.])
     writer.add_scalar(f'Loss/{prefix}_validation', val_loss, global_step=epoch)
     print(f'In epoch {epoch}, {prefix} validation loss is {val_loss}.')
 
     # Visualize the first 16 predicted images
-    with torch.no_grad():
+    with torch.no_grad(), autocast():
         val_data = [val_dataset[i] for i in range(min(16, len(val_dataset)))]
         if not val_data:
             print(f"Warning: {prefix} validation dataset is empty.")
@@ -71,8 +72,7 @@ def validate_and_visualize(model: MAE_ViT,
         img, ncat = cat_images(val_pre_img, val_diff_img, outputs, args, device)
         img = rearrange(img, '(v h1 w1) c h w -> c (h1 h) (w1 v w)', w1=1, v=ncat)
         writer.add_image(f'{prefix} MAE Image Comparison', img, global_step=epoch)
-        return val_loss
-
+    
     return val_loss
 
 def main(args: argparse.Namespace) -> None:
@@ -131,13 +131,14 @@ def main(args: argparse.Namespace) -> None:
     else:
         probe = create_centered_circle(N=N).to(device)
         print('INFO:', 'using generic / uninformative probe')
-        #probe = get_default_probe(probe_scale=probe_scale).to(device)
 
     model = MAE_ViT(mask_ratio=args.mask_ratio, intensity_scale=intensity_scale, probe=probe,
                     input_size=args.input_size).to(device)
     optim = torch.optim.AdamW(model.parameters(), lr=args.base_learning_rate * args.batch_size / 256, betas=(0.9, 0.95), weight_decay=args.weight_decay)
     lr_func = lambda epoch: min((epoch + 1) / (args.warmup_epoch + 1e-8), 0.5 * (math.cos(epoch / args.total_epoch * math.pi) + 1))
     lr_scheduler = torch.optim.lr_scheduler.LambdaLR(optim, lr_lambda=lr_func, verbose=True)
+
+    scaler = GradScaler()
 
     step_count = 0
     optim.zero_grad()
@@ -151,16 +152,31 @@ def main(args: argparse.Namespace) -> None:
                 continue
             _, diff_img, _ = data_batch
             diff_img = diff_img.to(device)
-            outputs = model(diff_img)
-            mae_mse_loss = mae_mse(outputs)
-            total_loss = mae_mse_loss
-#            mae_mae_loss = mae_mae(outputs)
-#            total_loss = mae_mae_loss
-            total_loss.backward()
+            
+            with autocast():
+                outputs = model(diff_img)
+                mae_mse_loss = mae_mse(outputs)
+                total_loss = mae_mse_loss
+
+            scaler.scale(total_loss).backward()
+            
             if step_count % steps_per_update == 0:
-                optim.step()
+                scaler.step(optim)
+                scaler.update()
                 optim.zero_grad()
+
             losses.append(total_loss.item())
+
+            if torch.isnan(total_loss) or torch.isinf(total_loss):
+                print(f"Warning: Loss is {total_loss} at epoch {e}, step {i}")
+                writer.add_scalar('Loss/nan_inf', 1, global_step=step_count)
+            else:
+                writer.add_scalar('Loss/nan_inf', 0, global_step=step_count)
+
+            if scaler.is_enabled():
+                writer.add_scalar('Grad/overflow', 0, global_step=step_count)
+            else:
+                writer.add_scalar('Grad/overflow', 1, global_step=step_count)
 
         lr_scheduler.step()
         avg_loss = sum(losses) / len(losses) if losses else 0
@@ -171,7 +187,7 @@ def main(args: argparse.Namespace) -> None:
             in_dist_val_loss = validate_and_visualize(model, in_dist_val_dataset, in_dist_val_dataloader, writer, device, args, e, 'In_dist', probe)
             out_dist_val_loss = validate_and_visualize(model, out_dist_val_dataset, out_dist_val_dataloader, writer, device, args, e, 'Out_dist', probe)
 
-        model.save_model(args.model_path)
+        model.save_model(args.model_path, scaler)
 
     writer.close()
 
