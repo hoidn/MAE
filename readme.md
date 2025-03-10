@@ -125,12 +125,4 @@ If using this code, please cite the related papers:
 }
 ```
 
-```
-@article{physics-informed-imaging,
-  title={Physics-Informed Neural Networks for Inverse Problems in Coherent Diffraction Imaging},
-  author={[Authors]},
-  journal={[Journal]},
-  year={2023}
-}
-```
 
