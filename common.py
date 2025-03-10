@@ -117,7 +117,7 @@ def load_datasets_and_dataloaders(train_dir: str, in_dist_val_dir: str, out_dist
             probes = torch.stack(probes)
         else:
             probes = None
-        return pre_images, diff_images, intensity_scales
+        return pre_images, diff_images, intensity_scales#, probes, coords
 
     train_dataloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=num_workers, collate_fn=collate_fn)
     in_dist_val_dataloader = DataLoader(in_dist_val_dataset, batch_size=batch_size, shuffle=False, num_workers=num_workers, collate_fn=collate_fn)

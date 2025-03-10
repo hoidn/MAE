@@ -17,9 +17,9 @@ def save_array(pre_array, diff_array, save_path, intensity_scale, probe, coords=
     Save pre_array, diff_array, intensity_scale, probe, and optionally coords to a single .npz file.
     """
     if coords is not None:
-        np.savez(save_path, pre_array=pre_array, diff_array=diff_array, intensity_scale=intensity_scale, probe=probe, coords=coords)
+        np.savez(save_path, pre_array=pre_array.astype('float32'), diff_array=diff_array.astype('float32'), intensity_scale=intensity_scale, probe=probe.astype('float32'), coords=coords)
     else:
-        np.savez(save_path, pre_array=pre_array, diff_array=diff_array, intensity_scale=intensity_scale, probe=probe)
+        np.savez(save_path, pre_array=pre_array.astype('float32'), diff_array=diff_array.astype('float32'), intensity_scale=intensity_scale, probe=probe.astype('float32'))
 
 def generate_datasets(intensity_scale=intensity_scale, probe_scale=0.55, N = 32, use_synthetic_lines=False, num_objects=10, object_size=392, num_lines=10):
     if N == 32:
@@ -54,6 +54,7 @@ def generate_datasets(intensity_scale=intensity_scale, probe_scale=0.55, N = 32,
     writer = SummaryWriter(os.path.join('logs', 'cifar10', 'mae-pretrain'))
 
     probe = get_default_probe(probe_scale=probe_scale, N = N)
+    #probe = torch.tensor(np.load('xprobe0.npz.npy')) / 5
 
     def process_and_save(dataloader, save_dir, phase):
         for batch_idx, batch_data in enumerate(dataloader):
@@ -74,7 +75,7 @@ def generate_datasets(intensity_scale=intensity_scale, probe_scale=0.55, N = 32,
             print(f"Probe mean: {probe.mean().item()}")
             for i, (pre_img, diff_img) in enumerate(zip(pre_diffraction_batch, diffracted_batch)):
                 save_path = os.path.join(save_dir, f'{phase}_{batch_idx}_{i}.npz')
-                pre_array = (probe * symmetric_zero_pad(pre_img)).cpu().numpy()
+                pre_array = torch.abs((probe * symmetric_zero_pad(pre_img)).cpu()).numpy()
                 diff_array = diff_img.cpu().numpy()
                 coords = centers[i].cpu().numpy() if centers is not None else None
                 save_array(pre_array, diff_array, save_path, intensity_scale, probe.cpu().numpy(), coords)

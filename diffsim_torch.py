@@ -133,7 +133,9 @@ def illuminate_and_diffract(Y_complex, probe, intensity_scale=None,
     X = diffract_obj(obj, draw_poisson = draw_poisson)
     X = X / intensity_scale
 
-    return obj_x_probe, X
+    # TODO: return the pre-illumination object as well, or else return the pre-illumination
+    # object and multiply by the probe further up the stack
+    return Y_complex, X
 
 def map_to_pi(tensor: torch.Tensor) -> torch.Tensor:
     """
@@ -230,7 +232,7 @@ def diffraction_from_channels(batch, probe, intensity_scale=1000., draw_poisson=
     dprint(f"Probe shape: {probe.shape}, Data type: {probe.dtype}")
     
     # Illumination and diffraction simulation
-    Y_complex_illuminated, X = illuminate_and_diffract(Y_complex, probe, intensity_scale=intensity_scale, draw_poisson=draw_poisson)
+    Y_complex, X = illuminate_and_diffract(Y_complex, probe, intensity_scale=intensity_scale, draw_poisson=draw_poisson)
     
     dprint(f"Diffracted X shape: {X.shape}, Data type: {X.dtype}")
     
@@ -239,7 +241,7 @@ def diffraction_from_channels(batch, probe, intensity_scale=1000., draw_poisson=
     
     dprint(f"Diffracted batch shape: {diffracted_batch.shape}, Data type: {diffracted_batch.dtype}")
     
-    return Y_complex_illuminated, diffracted_batch
+    return Y_complex, diffracted_batch
 
 def complex_to_channels(complex_data):
     amplitude = torch.abs(complex_data)

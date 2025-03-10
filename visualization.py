@@ -118,7 +118,7 @@ def visualize_realspace(intermediate_img, mask, softplus = True):
     Returns:
     dict: Contains the RGB-formatted amplitude, phase, and HSV tensor.
     """
-    mask = mask.cpu()
+    mask = torch.abs(mask.cpu())
     # Apply mask to the intermediate image tensor
     smooth_tensor = apply_mask_to_hsv_tensor(intermediate_img.cpu(), mask)
 

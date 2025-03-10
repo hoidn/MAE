@@ -150,6 +150,8 @@ def main(args: argparse.Namespace) -> None:
             step_count += 1
             if data_batch is None:
                 continue
+            # TODO might want to update load_datasets_and_dataloaders so that it returns
+            # all 5 batch elements
             _, diff_img, _ = data_batch
             diff_img = diff_img.to(device)
             

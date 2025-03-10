@@ -145,11 +145,11 @@ class MAE_Decoder(torch.nn.Module):
 class MAE_ViT(torch.nn.Module):
     def __init__(self,
                  input_size: int = 64,
-                 emb_dim: int = 192,
+                 emb_dim: int = 272,
                  encoder_layer: int = 12,
-                 encoder_head: int = 3,
-                 decoder_layer: int = 4,
-                 decoder_head: int = 3,
+                 encoder_head: int = 4,
+                 decoder_layer: int = 12,
+                 decoder_head: int = 4,
                  mask_ratio: float = 0.75,
                  intensity_scale: float = 1000.,
                  probe: torch.Tensor = None
